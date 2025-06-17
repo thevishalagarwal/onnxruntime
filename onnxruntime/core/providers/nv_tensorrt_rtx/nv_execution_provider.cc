@@ -1297,6 +1297,20 @@ void NvExecutionProvider::IncrementRegularRunCountBeforeGraphCapture() {
   ++regular_run_count_before_graph_capture_;
 }
 
+common::StatusCode NvExecutionProvider::isValidCompiledModel(const onnxruntime::Graph& graph){
+  for(const auto& node: graph.Nodes()){
+    if(node->OpType() == EPCONTEXT_OP) {
+      auto& attrs = node->GetAttributes();
+      auto trt_engine = attrs.at(EP_CACHE_CONTEXT);
+      status = trt::isValidEngine(trt_engine);
+
+      if (status == common::StatusCode::MODEL_UNSUPPORTED || status == common::StatusCode::MODEL_SUPPORTED_PREFER_RECOMPILATION)
+        return status;
+    }
+  }
+  return common::StatusCode::MODEL_SUPPORTED_OPTIMAL;
+}
+
 std::vector<AllocatorPtr> NvExecutionProvider::CreatePreferredAllocators() {
   AllocatorCreationInfo default_memory_info(
       [](OrtDevice::DeviceId device_id) { return std::make_unique<CUDAAllocator>(device_id, CUDA); },
