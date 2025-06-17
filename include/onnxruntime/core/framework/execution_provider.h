@@ -370,7 +370,7 @@ class IExecutionProvider {
    * Check if the compiled blob of EP context model is compatible with the user environment,
    * Recompile if not incompatible
   */
-  virtual bool isValidCompiledModel() {
+  virtual common::StatusCode isValidCompiledModel(const onnxruntime::Graph& graph) {
     return true;
   }
 

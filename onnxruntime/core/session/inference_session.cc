@@ -2022,9 +2022,9 @@ common::Status InferenceSession::Initialize() {
 
     // Check compiled EP context model compatibility
     for (auto ep: execution_providers_) {
-      bool valid = ep->isValidCompiledModel(graph);
-      if(!valid)
-        return ORT_MAKE_STATUS(ONNXRUNTIME, MODEL_REQUIRES_COMPILATION, "The compiled EP Context blob is incompitable",
+      common::StatusCode compileStatus = ep->isValidCompiledModel(graph);
+      if(compileStatus == common::StatusCode::MODEL_UNSUPPORTED)
+        return ORT_MAKE_STATUS(ONNXRUNTIME, MODEL_UNSUPPORTED, "The compiled EP Context blob is incompitable",
                                  ep, "Please recompile the model");
     }
 
