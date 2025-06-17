@@ -2020,6 +2020,14 @@ common::Status InferenceSession::Initialize() {
     // Verify that there are no external initializers in the graph if external data is disabled.
     onnxruntime::Graph& graph = model_->MainGraph();
 
+    // Check compiled EP context model compatibility
+    for (auto ep: execution_providers_) {
+      bool valid = ep->isValidCompiledModel(graph);
+      if(!valid)
+        return ORT_MAKE_STATUS(ONNXRUNTIME, MODEL_REQUIRES_COMPILATION, "The compiled EP Context blob is incompitable",
+                                 ep, "Please recompile the model");
+    }
+
 #ifdef DISABLE_EXTERNAL_INITIALIZERS
     const InitializedTensorSet& initializers = graph.GetAllInitializedTensors();
     for (const auto& it : initializers) {
