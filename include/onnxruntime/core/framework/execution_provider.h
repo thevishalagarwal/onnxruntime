@@ -366,6 +366,14 @@ class IExecutionProvider {
     return InlinedVector<const Node*>();
   }
 
+  /**
+   * Check if the compiled blob of EP context model is compatible with the user environment,
+   * Recompile if not incompatible
+  */
+  virtual bool isValidCompiledModel() {
+    return true;
+  }
+
  private:
   const std::string type_;
 
