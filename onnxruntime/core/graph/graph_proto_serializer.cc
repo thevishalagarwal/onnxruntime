@@ -9,7 +9,8 @@ void GraphViewerToProto(const GraphViewer& graph_view,
                         ONNX_NAMESPACE::GraphProto& graph_proto,
                         bool include_initializer,
                         bool include_outer_scope_args,
-                        ExecutionOrder order) {
+                        ExecutionOrder order,
+                        bool include_raw_initializer) {
   graph_proto.set_name(graph_view.Name());
   graph_proto.set_doc_string(graph_view.Description());
 
@@ -71,7 +72,26 @@ void GraphViewerToProto(const GraphViewer& graph_view,
 
     for (auto& it : const_inits) {
       auto* p_initializer = graph_proto.add_initializer();
-      *p_initializer = *(initializers.at(it));
+      // *p_initializer = *(initializers.at(it));
+      auto* init = initializers.at(it);
+      if (init->has_raw_data() && !include_raw_initializer) {
+        // Set datatype
+        if (init->has_data_type()) {
+          p_initializer->set_data_type(init->data_type());
+        }
+        // Set name
+        if (init->has_name()) {
+          p_initializer->set_name(init->name());
+        }
+
+        // Set dims
+        for (int i = 0; i < init->dims_size(); ++i) {
+          p_initializer->add_dims(init->dims()[i]);
+        }
+      } else {
+        *p_initializer = *init;
+      }
+
       current_scope_initializer_set.insert(it);
     }
 
