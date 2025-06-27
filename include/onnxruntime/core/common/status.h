@@ -46,6 +46,10 @@ enum StatusCode {
   EP_FAIL = 11,
   MODEL_LOAD_CANCELED = 12,
   MODEL_REQUIRES_COMPILATION = 13,
+  // Compile related error codes
+  MODEL_SUPPORTED_OPTIMAL = 14,
+  MODEL_SUPPORTED_PREFER_RECOMPILATION = 15,
+  MODEL_UNSUPPORTED = 16
 };
 
 constexpr const char* StatusCodeToString(StatusCode status) noexcept {

@@ -366,6 +366,14 @@ class IExecutionProvider {
     return InlinedVector<const Node*>();
   }
 
+  /**
+   * Check if the compiled blob of EP context model is compatible with the user environment,
+   * Recompile if not incompatible
+  */
+  virtual common::StatusCode isValidCompiledModel(const onnxruntime::Graph& graph) {
+    return true;
+  }
+
  private:
   const std::string type_;
 
