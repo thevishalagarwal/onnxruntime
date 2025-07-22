@@ -29,6 +29,7 @@
 #include <map>
 #include <memory>
 #include <filesystem>
+#include <iostream>          // <-- add this
 // TODO: find a better way to share this
 #include "core/providers/cuda/cuda_stream_handle.h"
 
@@ -140,6 +141,51 @@ void OutputAllocator::notifyShape(char const* /*tensorName*/, nvinfer1::Dims con
   for (int i = 0; i < dims.nbDims; i++) {
     output_shapes.push_back(dims.d[i]);
   }
+}
+
+//------------------------------------------------------------------
+// Dump every model input and every initializer held by the Graph
+//------------------------------------------------------------------
+static void DumpInputsAndInitializers(const onnxruntime::GraphViewer& gv) {
+  std::cout << "\n=========== Graph IO ===========\n";
+
+  // 1. All graph-inputs ------------------------------------------------------
+  std::cout << "Inputs (" << gv.GetInputs().size() << "):\n";
+  for (const auto* arg : gv.GetInputs()) {
+    std::cout << "  " << arg->Name();
+
+    // Optional: print shape
+    const auto* shp = arg->Shape();
+    if (shp) {
+      std::cout << "  dims=[";
+      for (int i = 0; i < shp->dim_size(); ++i) {
+        const auto& d = shp->dim(i);
+        if (d.has_dim_value())       std::cout << d.dim_value();
+        else if (d.has_dim_param())  std::cout << d.dim_param();
+        else                         std::cout << "?";
+        if (i + 1 < shp->dim_size()) std::cout << ",";
+      }
+      std::cout << "]";
+    }
+    std::cout << "\n";
+  }
+
+  // 2. All initializers ------------------------------------------------------
+  const auto& inits = gv.GetAllInitializedTensors();   // map<string,const TensorProto*>
+
+  std::cout << "Initializers (" << inits.size() << "):\n";
+  for (const auto& kv : inits) {
+    const std::string& name = kv.first;
+    const auto* tp         = kv.second;            // ONNX TensorProto
+
+    std::cout << "  " << name << "  dims=[";
+    for (int i = 0; i < tp->dims_size(); ++i) {
+      std::cout << tp->dims().Get(i);
+      if (i + 1 < tp->dims_size()) std::cout << ",";
+    }
+    std::cout << "]\n";
+  }
+  std::cout << "================================\n";
 }
 
 class Memcpy final : public OpKernel {
@@ -2126,6 +2172,38 @@ NvExecutionProvider::GetCapability(const GraphViewer& graph,
   return result;
 }
 
+bool convertOnnx2TrtDtype(int32_t onnx_dtype, nvinfer1::DataType* trt_dtype)
+{
+    switch (onnx_dtype)
+    {
+    case TensorProto_DataType::TensorProto_DataType_DOUBLE: *trt_dtype = nvinfer1::DataType::kFLOAT; break;
+    case TensorProto_DataType::TensorProto_DataType_FLOAT: *trt_dtype = nvinfer1::DataType::kFLOAT; break;
+    case TensorProto_DataType::TensorProto_DataType_INT8: *trt_dtype = nvinfer1::DataType::kINT8; break;
+    case TensorProto_DataType::TensorProto_DataType_UINT8: *trt_dtype = nvinfer1::DataType::kUINT8; break;
+    case TensorProto_DataType::TensorProto_DataType_FLOAT16: *trt_dtype = nvinfer1::DataType::kHALF; break;
+    case TensorProto_DataType::TensorProto_DataType_BFLOAT16: *trt_dtype = nvinfer1::DataType::kBF16; break;
+    case TensorProto_DataType::TensorProto_DataType_BOOL: *trt_dtype = nvinfer1::DataType::kBOOL; break;
+    case TensorProto_DataType::TensorProto_DataType_INT32: *trt_dtype = nvinfer1::DataType::kINT32; break;
+    case TensorProto_DataType::TensorProto_DataType_INT64: *trt_dtype = nvinfer1::DataType::kINT64; break;
+    case TensorProto_DataType::TensorProto_DataType_FLOAT8E4M3FN: *trt_dtype = nvinfer1::DataType::kFP8; break;
+    case TensorProto_DataType::TensorProto_DataType_INT4: *trt_dtype = nvinfer1::DataType::kINT4; break;
+    // case TensorProto_DataType::TensorProto_DataType_FLOAT4E2M1: *trt_dtype = nvinfer1::DataType::kFP4; break;
+    default:
+        std::cerr << "Unsupported ONNX data type: " << onnx_dtype << " (" << std::to_string(onnx_dtype)
+                  << ")" << std::endl;
+        return false;
+    }
+    return true;
+}
+
+static int64_t getNumElements(const std::vector<int64_t>& dims)
+{
+  int64_t num_elements = 1;
+  for (const auto& dim : dims)
+    num_elements *= dim;
+  return num_elements;
+}
+
 /**
  * Refit the weight-stripped engine
  */
@@ -2137,7 +2215,8 @@ common::Status NvExecutionProvider::RefitEngine(std::string onnx_model_filename,
                                                 size_t onnx_model_bytestream_size,
                                                 nvinfer1::ICudaEngine* trt_engine,
                                                 bool serialize_refitted_engine,
-                                                bool detailed_build_log) {
+                                                bool detailed_build_log,
+                                                const GraphViewer* graph_viewer) {
   bool refit_from_file = onnx_model_bytestream == nullptr && onnx_model_bytestream_size == 0;
   std::filesystem::path onnx_model_path{onnx_model_folder_path};
   if (refit_from_file) {
@@ -2175,19 +2254,102 @@ common::Status NvExecutionProvider::RefitEngine(std::string onnx_model_filename,
   auto refitter = std::unique_ptr<nvinfer1::IRefitter>(nvinfer1::createInferRefitter(*trt_engine, trt_logger));
   auto parser_refitter = std::unique_ptr<nvonnxparser::IParserRefitter>(
       nvonnxparser::createParserRefitter(*refitter, trt_logger));
-  if (refit_from_file) {
-    LOGS_DEFAULT(VERBOSE) << "[NvTensorRTRTX EP] Refitting from file on disk: " << onnx_model_path.string();
-    if (!parser_refitter->refitFromFile(onnx_model_path.string().c_str())) {
-      return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL,
-                             "Nv EP's IParserRefitter could not refit deserialized weight-stripped engine with weights contained in: " + onnx_model_path.string());
+
+
+  // print the initializers
+    if(graph_viewer != nullptr) {
+      const auto& inits = graph_viewer->GetAllInitializedTensors();
+      std::cout << "Initializers (" << inits.size() << "):\n";
+      for (const auto& kv : inits) {
+        const std::string& name = kv.first;
+        // const auto* tp         = kv.second;            // ONNX TensorProto
+        std::cout << "name: " << name << std::endl;
+      }
+      std::cout << "--------------------------------" << std::endl;
+
+      std::cout << "graph viewer node count: "
+                << graph_viewer->NumberOfNodes() << std::endl;
+      for (int i = 0; i < graph_viewer->MaxNodeIndex(); ++i) {
+        auto node = graph_viewer->GetNode(i);
+        if (node != nullptr) {
+          std::cout << "node name: " << node->OpType() << std::endl;
+        }
+      }
+      std::cout << "--------------------------------" << std::endl;
+
+      std::cout << "trt engine IO names: " << std::endl;
+
+      auto const nbIO = trt_engine->getNbIOTensors();
+      for (int32_t i = 0; i < nbIO; ++i)
+      {
+          auto const name = trt_engine->getIOTensorName(i);
+          std::cout << "IO name: " << name << std::endl;
+      }
+      std::cout << "--------------------------------" << std::endl;
+
+      std::cout << "trt engine weight names: " << std::endl;
+      int required_weights = refitter->getAllWeights(0, nullptr);
+      std::vector<char const*> refit_names(required_weights);
+      refitter->getAllWeights(required_weights, refit_names.data());
+      for (int i = 0; i < required_weights; ++i)
+      {
+          std::cout << "weight name: " << refit_names[i] << std::endl;
+      }
+      std::cout << "--------------------------------" << std::endl;
     }
-  } else {
-    LOGS_DEFAULT(VERBOSE) << "[NvTensorRTRTX EP] Refitting from byte array";
-    if (!parser_refitter->refitFromBytes(onnx_model_bytestream, onnx_model_bytestream_size)) {
-      return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL,
-                             "Nv EP's IParserRefitter could not refit deserialized weight-stripped engine with weights contained in the provided bytestraem");
+
+
+  // refit with EP context
+  if (graph_viewer!=nullptr && GraphHasCtxNode(*graph_viewer)) {
+
+    int required_weights = refitter->getAllWeights(0, nullptr);
+    std::vector<char const*> refit_names(required_weights);
+    refitter->getAllWeights(required_weights, refit_names.data());
+
+    std::vector<std::string> weight_names;
+    std::vector<nvinfer1::Weights> weights;
+    weight_names.reserve(required_weights);
+    weights.reserve(required_weights);
+
+
+    for(const auto&inits : graph_viewer->GetAllInitializedTensors()) {
+      if(std::find(refit_names.begin(), refit_names.end(), inits.first) != refit_names.end()) {
+        weight_names.push_back(inits.first);
+
+        const auto *initializer = inits.second;
+
+      nvinfer1::Weights wts;
+      convertOnnx2TrtDtype(initializer->data_type(), &wts.type);
+
+      const auto& dims = initializer->dims();
+      std::vector<int64_t> dims_vec(dims.data(), dims.data() + dims.size());
+      wts.count = getNumElements(dims_vec);
+
+      wts.values = initializer->raw_data().data();
+      weights.push_back(std::move(wts));
+      }
+    }
+
+    for(int i = 0; i < weight_names.size(); ++i) {
+      refitter->setNamedWeights(weight_names[i].c_str(), weights[i]);
+    }
+
+  } else { // refit for all other cases with a normal ONNX model
+    if (refit_from_file) {
+    LOGS_DEFAULT(VERBOSE) << "[NvTensorRTRTX EP] Refitting from file on disk: " << onnx_model_path.string();
+      if (!parser_refitter->refitFromFile(onnx_model_path.string().c_str())) {
+        return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL,
+                             "Nv EP's IParserRefitter could not refit deserialized weight-stripped engine with weights contained in: " + onnx_model_path.string());
+      }
+    } else {
+      LOGS_DEFAULT(VERBOSE) << "[NvTensorRTRTX EP] Refitting from byte array";
+      if (!parser_refitter->refitFromBytes(onnx_model_bytestream, onnx_model_bytestream_size)) {
+        return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL,
+                              "Nv EP's IParserRefitter could not refit deserialized weight-stripped engine with weights contained in the provided bytestraem");
+      }
     }
   }
+
   if (refitter->refitCudaEngine()) {
     LOGS_DEFAULT(VERBOSE) << "[NvTensorRTRTX EP] Successfully refitted the weight-stripped engine.";
   } else {
@@ -2535,6 +2697,7 @@ Status NvExecutionProvider::CreateNodeComputeInfoFromGraph(const GraphViewer& gr
         auto cache_file_name = std::filesystem::path(engine_cache_path).filename();
         ep_cache_context_attr_ = std::filesystem::path(engine_cache_relative_path_to_context_model_dir).append(cache_file_name.string()).string();
       }
+      DumpInputsAndInitializers(graph_body_viewer);
       std::string compute_capability_hw_compat = compute_capability_ + "+";
       std::unique_ptr<ONNX_NAMESPACE::ModelProto> model_proto{CreateCtxModel(graph_body_viewer,
                                                                              ep_cache_context_attr_,
@@ -2560,7 +2723,7 @@ Status NvExecutionProvider::CreateNodeComputeInfoFromGraph(const GraphViewer& gr
                               onnx_size,
                               trt_engine.get(),
                               false /* serialize refitted engine to disk */,
-                              detailed_build_log_);
+                              detailed_build_log_, &graph_body_viewer);
     if (status != Status::OK()) {
       return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL, status.ErrorMessage());
     }
@@ -2947,6 +3110,35 @@ Status NvExecutionProvider::CreateNodeComputeInfoFromPrecompiledEngine(const Gra
                                                            onnx_model_bytestream_,
                                                            onnx_model_bytestream_size_,
                                                            detailed_build_log_);
+  // // print the graph body viewer size
+  // std::cout << "graph body viewer node count: "
+  //           << graph_body_viewer.NumberOfNodes() << std::endl;
+
+  // // list each model input and its shape
+  // std::cout << "model inputs:" << std::endl;
+  // for (const auto* input_arg : graph_body_viewer.GetInputs()) {
+  //   std::cout << "  " << input_arg->Name() << " dims=[";
+
+  //   const auto* shape_proto = input_arg->Shape();
+  //   if (!shape_proto || shape_proto->dim_size() == 0) {
+  //     std::cout << "<scalar>";
+  //   } else {
+  //     for (int d = 0; d < shape_proto->dim_size(); ++d) {
+  //       const auto& dim = shape_proto->dim(d);
+  //       if (dim.has_dim_value()) {
+  //         std::cout << dim.dim_value();
+  //       } else if (dim.has_dim_param()) {
+  //         std::cout << dim.dim_param();     // symbolic dimension
+  //       } else {
+  //         std::cout << "?";                 // unknown dimension
+  //       }
+  //       if (d + 1 < shape_proto->dim_size()) std::cout << ",";
+  //     }
+  //   }
+  //   std::cout << ']' << std::endl;
+  // }
+  DumpInputsAndInitializers(graph_body_viewer);
+
   auto status = trt_cache_model_handler.GetEpContextFromGraph(graph_body_viewer);
   if (status != Status::OK()) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL, status.ErrorMessage());
