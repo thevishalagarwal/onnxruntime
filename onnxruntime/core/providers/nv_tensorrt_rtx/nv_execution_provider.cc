@@ -2219,35 +2219,6 @@ common::Status NvExecutionProvider::RefitEngine(std::string onnx_model_filename,
                                                 const GraphViewer* graph_viewer) {
   bool refit_from_file = onnx_model_bytestream == nullptr && onnx_model_bytestream_size == 0;
   std::filesystem::path onnx_model_path{onnx_model_folder_path};
-  if (refit_from_file) {
-    if (!onnx_model_filename.empty()) {
-      onnx_model_path.append(onnx_model_filename);
-    }
-    if (onnx_model_path.empty()) {
-      return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL,
-                             "The ONNX model was not provided as path. "
-                             "Please use provide an ONNX bytestream to enable refitting the weightless engine.");
-    } else {
-      // check if file path to ONNX is legal
-      if (path_check && IsAbsolutePath(onnx_model_path.string())) {
-        return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL,
-                               "For security purpose, the ONNX model path should be set with "
-                               "a relative path, but it is an absolute path: " +
-                                   onnx_model_path.string());
-      }
-      if (path_check && IsRelativePathToParentPath(onnx_model_path.string())) {
-        return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL,
-                               "The ONNX model path has '..'. For security purpose, it's not "
-                               "allowed to point outside the directory.");
-      }
-
-      if (!(std::filesystem::exists(onnx_model_path) && std::filesystem::is_regular_file(onnx_model_path))) {
-        return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL,
-                               "The ONNX model " + onnx_model_path.string() +
-                                   " does not exist.");
-      }
-    }
-  }
 
   // weight-stripped engine refit logic
   TensorrtLogger& trt_logger = GetTensorrtLogger(detailed_build_log);
@@ -2311,7 +2282,6 @@ common::Status NvExecutionProvider::RefitEngine(std::string onnx_model_filename,
     weight_names.reserve(required_weights);
     weights.reserve(required_weights);
 
-
     for(const auto&inits : graph_viewer->GetAllInitializedTensors()) {
       if(std::find(refit_names.begin(), refit_names.end(), inits.first) != refit_names.end()) {
         weight_names.push_back(inits.first);
@@ -2335,6 +2305,36 @@ common::Status NvExecutionProvider::RefitEngine(std::string onnx_model_filename,
     }
 
   } else { // refit for all other cases with a normal ONNX model
+    if (refit_from_file) {
+      if (!onnx_model_filename.empty()) {
+        onnx_model_path.append(onnx_model_filename);
+      }
+      if (onnx_model_path.empty()) {
+        return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL,
+                              "The ONNX model was not provided as path. "
+                              "Please use provide an ONNX bytestream to enable refitting the weightless engine.");
+      } else {
+        // check if file path to ONNX is legal
+        if (path_check && IsAbsolutePath(onnx_model_path.string())) {
+          return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL,
+                                "For security purpose, the ONNX model path should be set with "
+                                "a relative path, but it is an absolute path: " +
+                                    onnx_model_path.string());
+        }
+        if (path_check && IsRelativePathToParentPath(onnx_model_path.string())) {
+          return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL,
+                                "The ONNX model path has '..'. For security purpose, it's not "
+                                "allowed to point outside the directory.");
+        }
+
+        if (!(std::filesystem::exists(onnx_model_path) && std::filesystem::is_regular_file(onnx_model_path))) {
+          return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL,
+                                "The ONNX model " + onnx_model_path.string() +
+                                    " does not exist.");
+        }
+      }
+    }
+
     if (refit_from_file) {
     LOGS_DEFAULT(VERBOSE) << "[NvTensorRTRTX EP] Refitting from file on disk: " << onnx_model_path.string();
       if (!parser_refitter->refitFromFile(onnx_model_path.string().c_str())) {
@@ -3110,33 +3110,6 @@ Status NvExecutionProvider::CreateNodeComputeInfoFromPrecompiledEngine(const Gra
                                                            onnx_model_bytestream_,
                                                            onnx_model_bytestream_size_,
                                                            detailed_build_log_);
-  // // print the graph body viewer size
-  // std::cout << "graph body viewer node count: "
-  //           << graph_body_viewer.NumberOfNodes() << std::endl;
-
-  // // list each model input and its shape
-  // std::cout << "model inputs:" << std::endl;
-  // for (const auto* input_arg : graph_body_viewer.GetInputs()) {
-  //   std::cout << "  " << input_arg->Name() << " dims=[";
-
-  //   const auto* shape_proto = input_arg->Shape();
-  //   if (!shape_proto || shape_proto->dim_size() == 0) {
-  //     std::cout << "<scalar>";
-  //   } else {
-  //     for (int d = 0; d < shape_proto->dim_size(); ++d) {
-  //       const auto& dim = shape_proto->dim(d);
-  //       if (dim.has_dim_value()) {
-  //         std::cout << dim.dim_value();
-  //       } else if (dim.has_dim_param()) {
-  //         std::cout << dim.dim_param();     // symbolic dimension
-  //       } else {
-  //         std::cout << "?";                 // unknown dimension
-  //       }
-  //       if (d + 1 < shape_proto->dim_size()) std::cout << ",";
-  //     }
-  //   }
-  //   std::cout << ']' << std::endl;
-  // }
   DumpInputsAndInitializers(graph_body_viewer);
 
   auto status = trt_cache_model_handler.GetEpContextFromGraph(graph_body_viewer);
