@@ -97,7 +97,7 @@ ONNX_NAMESPACE::ModelProto* CreateCtxModel(const GraphViewer& graph_viewer,
     const auto& weight_tp   = *init_pair.second;   // TensorProto
 
     // 1.  Add tensor data to the new graph
-    graph_build.AddInitializedTensor(weight_tp);
+    // graph_build.AddInitializedTensor(weight_tp);
 
     auto type_proto = ONNX_NAMESPACE::TypeProto::Create();
     type_proto->mutable_tensor_type()->set_elem_type(weight_tp.data_type());

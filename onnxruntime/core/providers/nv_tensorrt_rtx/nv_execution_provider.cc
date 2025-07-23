@@ -2228,46 +2228,46 @@ common::Status NvExecutionProvider::RefitEngine(std::string onnx_model_filename,
 
 
   // print the initializers
-    if(graph_viewer != nullptr) {
-      const auto& inits = graph_viewer->GetAllInitializedTensors();
-      std::cout << "Initializers (" << inits.size() << "):\n";
-      for (const auto& kv : inits) {
-        const std::string& name = kv.first;
-        // const auto* tp         = kv.second;            // ONNX TensorProto
-        std::cout << "name: " << name << std::endl;
-      }
-      std::cout << "--------------------------------" << std::endl;
+    // if(graph_viewer != nullptr) {
+    //   const auto& inits = graph_viewer->GetAllInitializedTensors();
+    //   std::cout << "Initializers (" << inits.size() << "):\n";
+    //   for (const auto& kv : inits) {
+    //     const std::string& name = kv.first;
+    //     // const auto* tp         = kv.second;            // ONNX TensorProto
+    //     std::cout << "name: " << name << std::endl;
+    //   }
+    //   std::cout << "--------------------------------" << std::endl;
 
-      std::cout << "graph viewer node count: "
-                << graph_viewer->NumberOfNodes() << std::endl;
-      for (int i = 0; i < graph_viewer->MaxNodeIndex(); ++i) {
-        auto node = graph_viewer->GetNode(i);
-        if (node != nullptr) {
-          std::cout << "node name: " << node->OpType() << std::endl;
-        }
-      }
-      std::cout << "--------------------------------" << std::endl;
+    //   std::cout << "graph viewer node count: "
+    //             << graph_viewer->NumberOfNodes() << std::endl;
+    //   for (int i = 0; i < graph_viewer->MaxNodeIndex(); ++i) {
+    //     auto node = graph_viewer->GetNode(i);
+    //     if (node != nullptr) {
+    //       std::cout << "node name: " << node->OpType() << std::endl;
+    //     }
+    //   }
+    //   std::cout << "--------------------------------" << std::endl;
 
-      std::cout << "trt engine IO names: " << std::endl;
+    //   std::cout << "trt engine IO names: " << std::endl;
 
-      auto const nbIO = trt_engine->getNbIOTensors();
-      for (int32_t i = 0; i < nbIO; ++i)
-      {
-          auto const name = trt_engine->getIOTensorName(i);
-          std::cout << "IO name: " << name << std::endl;
-      }
-      std::cout << "--------------------------------" << std::endl;
+    //   auto const nbIO = trt_engine->getNbIOTensors();
+    //   for (int32_t i = 0; i < nbIO; ++i)
+    //   {
+    //       auto const name = trt_engine->getIOTensorName(i);
+    //       std::cout << "IO name: " << name << std::endl;
+    //   }
+    //   std::cout << "--------------------------------" << std::endl;
 
-      std::cout << "trt engine weight names: " << std::endl;
-      int required_weights = refitter->getAllWeights(0, nullptr);
-      std::vector<char const*> refit_names(required_weights);
-      refitter->getAllWeights(required_weights, refit_names.data());
-      for (int i = 0; i < required_weights; ++i)
-      {
-          std::cout << "weight name: " << refit_names[i] << std::endl;
-      }
-      std::cout << "--------------------------------" << std::endl;
-    }
+    //   std::cout << "trt engine weight names: " << std::endl;
+    //   int required_weights = refitter->getAllWeights(0, nullptr);
+    //   std::vector<char const*> refit_names(required_weights);
+    //   refitter->getAllWeights(required_weights, refit_names.data());
+    //   for (int i = 0; i < required_weights; ++i)
+    //   {
+    //       std::cout << "weight name: " << refit_names[i] << std::endl;
+    //   }
+    //   std::cout << "--------------------------------" << std::endl;
+    // }
 
 
   // refit with EP context
@@ -2296,12 +2296,12 @@ common::Status NvExecutionProvider::RefitEngine(std::string onnx_model_filename,
       wts.count = getNumElements(dims_vec);
 
       wts.values = initializer->raw_data().data();
-      weights.push_back(std::move(wts));
+      weights.push_back(wts);
       }
     }
 
     for(int i = 0; i < weight_names.size(); ++i) {
-      refitter->setNamedWeights(weight_names[i].c_str(), weights[i]);
+      refitter->setNamedWeights(weight_names[i].c_str(), std::move(weights[i]));
     }
 
   } else { // refit for all other cases with a normal ONNX model
@@ -2343,7 +2343,7 @@ common::Status NvExecutionProvider::RefitEngine(std::string onnx_model_filename,
       }
     } else {
       LOGS_DEFAULT(VERBOSE) << "[NvTensorRTRTX EP] Refitting from byte array";
-      if (!parser_refitter->refitFromBytes(onnx_model_bytestream, onnx_model_bytestream_size)) {
+      if (!parser_refitter->refitFromBytes(onnx_model_bytestream, onnx_model_bytestream_size, onnx_model_filename.c_str())) {
         return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL,
                               "Nv EP's IParserRefitter could not refit deserialized weight-stripped engine with weights contained in the provided bytestraem");
       }
@@ -2697,7 +2697,7 @@ Status NvExecutionProvider::CreateNodeComputeInfoFromGraph(const GraphViewer& gr
         auto cache_file_name = std::filesystem::path(engine_cache_path).filename();
         ep_cache_context_attr_ = std::filesystem::path(engine_cache_relative_path_to_context_model_dir).append(cache_file_name.string()).string();
       }
-      DumpInputsAndInitializers(graph_body_viewer);
+      // DumpInputsAndInitializers(graph_body_viewer);
       std::string compute_capability_hw_compat = compute_capability_ + "+";
       std::unique_ptr<ONNX_NAMESPACE::ModelProto> model_proto{CreateCtxModel(graph_body_viewer,
                                                                              ep_cache_context_attr_,
@@ -3110,7 +3110,7 @@ Status NvExecutionProvider::CreateNodeComputeInfoFromPrecompiledEngine(const Gra
                                                            onnx_model_bytestream_,
                                                            onnx_model_bytestream_size_,
                                                            detailed_build_log_);
-  DumpInputsAndInitializers(graph_body_viewer);
+  // DumpInputsAndInitializers(graph_body_viewer);
 
   auto status = trt_cache_model_handler.GetEpContextFromGraph(graph_body_viewer);
   if (status != Status::OK()) {
