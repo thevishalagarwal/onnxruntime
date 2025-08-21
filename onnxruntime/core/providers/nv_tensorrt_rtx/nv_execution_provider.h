@@ -281,7 +281,8 @@ class NvExecutionProvider : public IExecutionProvider {
                                     size_t onnx_model_bytestream_size,
                                     nvinfer1::ICudaEngine* trt_engine,
                                     bool serialize_refitted_engine,
-                                    bool detailed_build_log);
+                                    bool detailed_build_log,
+                                    const GraphViewer* graph_body_viewer = nullptr);
 
  private:
   mutable NvExecutionProviderInfo info_;

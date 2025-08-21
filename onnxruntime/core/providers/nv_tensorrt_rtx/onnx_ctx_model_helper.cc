@@ -88,6 +88,32 @@ ONNX_NAMESPACE::ModelProto* CreateCtxModel(const GraphViewer& graph_viewer,
     outputs.push_back(&n_output);
   }
 
+  // ---------------------------------------------------------------------------
+  // Copy ALL initializers (weights) and wire them as node-inputs
+  // ---------------------------------------------------------------------------
+  const auto& initializers = graph_viewer.GetAllInitializedTensors();
+  for (const auto& init_pair : initializers) {
+    const auto& weight_name = init_pair.first;
+    const auto& weight_tp   = *init_pair.second;   // TensorProto
+
+    // 1.  Add tensor data to the new graph
+    // graph_build.AddInitializedTensor(weight_tp);
+
+    auto type_proto = ONNX_NAMESPACE::TypeProto::Create();
+    type_proto->mutable_tensor_type()->set_elem_type(weight_tp.data_type());
+
+    auto* shape_proto = type_proto->mutable_tensor_type()->mutable_shape();
+    for (int d = 0; d < weight_tp.dims_size(); ++d) {
+      shape_proto->add_dim()->set_dim_value(weight_tp.dims().Get(d));
+    }
+
+    auto& n_weight = graph_build.GetOrCreateNodeArg(weight_name, type_proto.get());
+
+    if (std::find(inputs.begin(), inputs.end(), &n_weight) == inputs.end()) {
+      inputs.push_back(&n_weight);
+    }
+  }
+
   // Create EP context node attributes
   auto attr_0 = ONNX_NAMESPACE::AttributeProto::Create();  // embed_mode
   auto attr_1 = ONNX_NAMESPACE::AttributeProto::Create();  // ep_cache_context
@@ -115,7 +141,9 @@ ONNX_NAMESPACE::ModelProto* CreateCtxModel(const GraphViewer& graph_viewer,
   attr_2->set_s(compute_capability);
   attr_3->set_name(ONNX_MODEL_FILENAME);
   attr_3->set_type(onnx::AttributeProto_AttributeType_STRING);
-  attr_3->set_s(std::filesystem::path(onnx_model_path).filename().string());
+  //attr_3->set_s(std::filesystem::path(onnx_model_path).filename().string());
+  auto random_var = onnx_model_path;
+  attr_3->set_s("");
 
   auto node_attributes = ONNX_NAMESPACE::NodeAttributes::Create();
   constexpr int num_attributes = 4;
@@ -303,7 +331,8 @@ Status TensorRTCacheModelHandler::GetEpContextFromGraph(const GraphViewer& graph
                                                      onnx_model_bytestream_size_,
                                                      (*trt_engine_).get(),
                                                      false /* serialize refitted engine to disk */,
-                                                     detailed_build_log_);
+                                                     detailed_build_log_,
+                                                     &graph_viewer);
       if (status != Status::OK()) {
         return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL, status.ErrorMessage());
       }
@@ -372,7 +401,8 @@ Status TensorRTCacheModelHandler::GetEpContextFromGraph(const GraphViewer& graph
                                                      onnx_model_bytestream_size_,
                                                      (*trt_engine_).get(),
                                                      true /* serialize refitted engine to disk */,
-                                                     detailed_build_log_);
+                                                     detailed_build_log_,
+                                                     &graph_viewer);
       if (status != Status::OK()) {
         return ORT_MAKE_STATUS(ONNXRUNTIME, EP_FAIL, status.ErrorMessage());
       }
