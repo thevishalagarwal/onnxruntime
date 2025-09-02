@@ -161,6 +161,37 @@ Dockerfile instructions are available [here](https://github.com/microsoft/onnxru
 
 ---
 
+## NVIDIA TensorRT RTX
+
+See more information on the TensorRT RTX Execution Provider [here](../execution-providers/TensorRTRTX-ExecutionProvider.md).
+
+## Minimum requirements
+
+| ONNX Runtime | TensorRT-RTX | CUDA Toolkit   |
+| :----------- | :----------- | :------------- |
+| main branch  | 1.1          | 12.x           |
+| 1.22         | 1.0          | 12.x           |
+
+### Pre-requisites
+* Download latest [CUDA toolkit](https://developer.nvidia.com/cuda-toolkit)
+  * The path to the CUDA installation must be set via the `CUDA_HOME` environment variable, or use the `--cuda_home` arg in the build command. The installation directory should contain `bin`, `include` and `lib` sub-directories.
+* Download [TensorRT RTX](https://developer.nvidia.com/tensorrt-rtx)
+* Visual Studio Build Tools - https://visualstudio.microsoft.com/downloads/
+
+### Windows
+
+```ps
+.\build.bat --config Release --parallel --use_nv_tensorrt_rtx --tensorrt_rtx_home path\to\tensorrt-rtx" --cuda_home "path\to\cuda\home" --cmake_generator "Visual Studio 17 2022" --build_shared_lib --skip_tests --build --update --use_vcpkg
+```
+
+### Linux
+
+```sh
+./build.sh --config Release --parallel --use_nv_tensorrt_rtx --tensorrt_rtx_home path/to/tensorrt-rtx" --cuda_home "path/to/cuda/home" --build_shared_lib --skip_tests --build --update
+```
+
+---
+
 ## NVIDIA Jetson TX1/TX2/Nano/Xavier/Orin
 
 ### Build Instructions
@@ -235,20 +266,7 @@ These instructions are for the latest [JetPack SDK](https://developer.nvidia.com
 
 * For a portion of Jetson devices like the Xavier series, higher power mode involves more cores (up to 6) to compute but it consumes more resource when building ONNX Runtime. Set `--parallel 1` in the build command if OOM happens and system is hanging.
 
-## TensorRT-RTX
-
-See more information on the NV TensorRT RTX Execution Provider [here](../execution-providers/TensorRTRTX-ExecutionProvider.md).
-
-### Prerequisites
-{: .no_toc }
-
- * Follow [instructions for CUDA execution provider](#cuda) to install CUDA and setup environment variables.
- * Intall TensorRT for RTX from nvidia.com (TODO: add link when available)
-
-### Build Instructions
-{: .no_toc }
-`build.bat --config Release --parallel 32 --build_dir _build --build_shared_lib --use_nv_tensorrt_rtx --tensorrt_home "C:\dev\TensorRT-RTX-1.1.0.3" --cuda_home "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9" --cmake_generator "Visual Studio 17 2022" --use_vcpkg`
-Replace the --tensorrt_home and --cuda_home with correct paths to CUDA and TensorRT-RTX installations.
+---
 
 ## oneDNN
 
