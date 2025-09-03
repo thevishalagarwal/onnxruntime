@@ -40,9 +40,9 @@ Information on how to build from source for TensorRT RTX EP can be found [here](
 
 ### C/C++
 ```c++
-const auto& api = Ort::GetApi();
+Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "SampleApp");
 Ort::SessionOptions session_options;
-api.SessionOptionsAppendExecutionProvider(session_options, "NvTensorRtRtx", nullptr, nullptr, 0);
+session_options.AppendExecutionProvider(onnxruntime::kNvTensorRTRTXExecutionProvider, {});
 Ort::Session session(env, model_path, session_options);
 ```
 
@@ -51,8 +51,18 @@ With Python APIs, you must explicitly register the TensorRT RTX EP when instanti
 
 ```python
 import onnxruntime as ort
-sess = ort.InferenceSession('model.onnx', providers=['NvTensorRtRtxExecutionProvider'])
+sess = ort.InferenceSession(model_path, providers=['NvTensorRtRtxExecutionProvider'])
 ```
+
+## Features
+
+### CUDA Graph
+
+### EP context model
+
+
+
+### Runtime cache
 
 ## Execution Provider Options
 TensorRT RTX EP provides the following user configurable options with the [Execution Provider Options](./TensorRTRTX-ExecutionProvider.md#execution-provider-options)
@@ -73,8 +83,6 @@ TensorRT RTX EP provides the following user configurable options with the [Execu
 | nv_multi_profile_enable | `bool` | Enable support for multiple optimization profiles in TensorRT engine. Allows dynamic input shapes for different inference requests | false |
 | nv_use_external_data_initializer | `bool` | Use external data initializer for model weights. Useful for EP context large models with external data files | false |
 
-* 
-
 
 
 #### Click below for Python API example:
@@ -94,11 +102,11 @@ provider_options = {
   'user_compute_stream': stream_handle
 }
 
-sess_opt = ort.SessionOptions()
-sess = ort.InferenceSession(model_path, sess_options=sess_opt, providers=[('NvTensorRTRTXExecutionProvider', provider_options)])
+sesion_options = ort.SessionOptions()
+sess = ort.InferenceSession(model_path, sess_options=sesion_options, providers=[('NvTensorRTRTXExecutionProvider', provider_options)])
 ```
-
 </details>
+
 
 #### Click below for C++ API example:
 
@@ -107,30 +115,21 @@ sess = ort.InferenceSession(model_path, sess_options=sess_opt, providers=[('NvTe
 ```c++
 Ort::SessionOptions session_options;
 
+// define a cuda stream
 cudaStream_t cuda_stream;
 cudaStreamCreate(&cuda_stream);
 
-// Need to put the CUDA stream handle in a string
-char streamHandle[32];
-sprintf_s(streamHandle, "%lld", (uint64_t)cuda_stream);
+char stream_handle[32];
+sprintf_s(stream_handle, "%lld", (uint64_t)cuda_stream);
 
-const auto& api = Ort::GetApi();
-std::vector<const char*> option_keys = {
-    "device_id",
-    "user_compute_stream",  // this implicitly sets "has_user_compute_stream"
-};
-std::vector<const char*> option_values = {
-    "1",
-    streamHandle
-};
+std::unordered_map<std::string, std::string> provider_options;
+provider_options[onnxruntime::nv::provider_option_names::kDeviceId] = "1";
+provider_options[onnxruntime::nv::provider_option_names::kUserComputeStream] = stream_handle;
 
-Ort::ThrowOnError(api.SessionOptionsAppendExecutionProvider(session_options, "NvTensorRtRtx", option_keys.data(), option_values.data(), option_keys.size()));
-
+session_options.AppendExecutionProvider(onnxruntime::kNvTensorRTRTXExecutionProvider, provider_options);
 ```
 
 </details>
-
-
 
 
 
@@ -144,31 +143,13 @@ Ort::ThrowOnError(api.SessionOptionsAppendExecutionProvider(session_options, "Nv
   * The format of the profile shapes is `input_tensor_1:dim_1xdim_2x...,input_tensor_2:dim_3xdim_4x...,...`
     * These three flags should all be provided in order to enable explicit profile shapes feature.
   * Note that multiple TensorRT RTX profiles can be enabled by passing multiple shapes for the same input tensor.
-  * Check TensorRT doc [optimization profiles](https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#opt_profiles) for more details.
-
-
-## Cache
-
-TensorRT RTX EP supports two types of model cache. These helps in reducing model load time significantly.
-
-1. EP context model
-2. Runtime cache
-
-
-### EP context model
-
-TensorRT RTX separates compilation into two phases - ahead of time (AOT) and just in time (JIT) compilation. In AOT phase, the ONNX model is compiled to an optimized binary blob and stored as an EP context model. This model will be compatible across multiple GPU generations.
-
-During inference, we only use the compiled EP context model. When loaded, TensorRT RTX will JIT compile the binary blob (engine) to fit to the used GPU. This JIT process is accelerated by TensorRT RTX's internal cache.
-
-For an example usage see:
-https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/test/providers/nv_tensorrt_rtx/nv_basic_test.cc
+  * Check TensorRT doc [optimization profiles](https://docs.nvidia.com/deeplearning/tensorrt-rtx/latest/inference-library/work-with-dynamic-shapes.html) for more details.
 
 
 ## Performance test
 
-When using [onnxruntime_perf_test](https://github.com/microsoft/onnxruntime/tree/main/onnxruntime/test/perftest#onnxruntime-performance-test), use the flag `-e nvtensorrttrx`.
+When using [onnxruntime_perf_test](https://github.com/microsoft/onnxruntime/tree/main/onnxruntime/test/perftest#onnxruntime-performance-test), use the flag `-e nvtensorrttrx`
 
 
-### TensorRT RTX Plugins Support
-TensorRT RTX doesn't support plugins.
+### Plugins Support
+TensorRT RTX doesn't support plugins

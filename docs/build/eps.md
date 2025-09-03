@@ -169,25 +169,50 @@ See more information on the TensorRT RTX Execution Provider [here](../execution-
 
 | ONNX Runtime | TensorRT-RTX | CUDA Toolkit   |
 | :----------- | :----------- | :------------- |
-| main branch  | 1.1          | 12.x           |
-| 1.22         | 1.0          | 12.x           |
+| main branch  | 1.1          | 12.9           |
+| 1.22         | 1.0          | 12.8           |
 
 ### Pre-requisites
-* Download latest [CUDA toolkit](https://developer.nvidia.com/cuda-toolkit)
-  * The path to the CUDA installation must be set via the `CUDA_HOME` environment variable, or use the `--cuda_home` arg in the build command. The installation directory should contain `bin`, `include` and `lib` sub-directories.
-* Download [TensorRT RTX](https://developer.nvidia.com/tensorrt-rtx)
-* Visual Studio Build Tools - https://visualstudio.microsoft.com/downloads/
+* Install git, cmake, Python 3.12
+* Install latest [NVIDIA driver](https://www.nvidia.com/en-us/drivers/)
+* Install [CUDA toolkit 12.9](https://developer.nvidia.com/cuda-12-9-1-download-archive)
+* Install [TensorRT RTX](https://docs.nvidia.com/deeplearning/tensorrt-rtx/latest/installing-tensorrt-rtx/installing.html)
+* For Windows only, Visual Studio - https://visualstudio.microsoft.com/downloads/
+* Set TensorRT-RTX dlls in `PATH` or put it in same folder as application exe
 
-### Windows
-
-```ps
-.\build.bat --config Release --parallel --use_nv_tensorrt_rtx --tensorrt_rtx_home path\to\tensorrt-rtx" --cuda_home "path\to\cuda\home" --cmake_generator "Visual Studio 17 2022" --build_shared_lib --skip_tests --build --update --use_vcpkg
-```
-
-### Linux
 
 ```sh
-./build.sh --config Release --parallel --use_nv_tensorrt_rtx --tensorrt_rtx_home path/to/tensorrt-rtx" --cuda_home "path/to/cuda/home" --build_shared_lib --skip_tests --build --update
+git clone https://github.com/microsoft/onnxruntime.git
+cd onnxruntime
+```
+
+### C/C++ APIs
+
+#### Windows
+
+```powershell
+.\build.bat --config Release --build_dir build --parallel --use_nv_tensorrt_rtx --tensorrt_rtx_home "path\to\tensorrt-rtx" --cuda_home "path\to\cuda\home" --cmake_generator "Visual Studio 17 2022" --build_shared_lib --skip_tests --build --update --use_vcpkg        
+```
+
+#### Linux
+
+```sh
+./build.sh --config Release --build_dir build --parallel --use_nv_tensorrt_rtx --tensorrt_rtx_home "path/to/tensorrt-rtx" --cuda_home "path/to/cuda/home" --build_shared_lib --skip_tests --build --update          
+```
+
+#### Run unit test
+```powershell
+.\build\Release\Release\onnxruntime_test_all.exe --gtest_filter=*NvExecutionProviderTest.*
+```
+
+### Python wheel
+
+```powershell
+# build the python wheel
+.\build.bat --config Release --build_dir build --parallel --use_nv_tensorrt_rtx --tensorrt_rtx_home "path\to\tensorrt-rtx" --cuda_home "path\to\cuda\home" --cmake_generator "Visual Studio 17 2022" --build_shared_lib --skip_tests --build_wheel
+
+# install
+pip install "build\Release\Release\dist\onnxruntime-1.23.0-cp312-cp312-win_amd64.whl"
 ```
 
 ---
