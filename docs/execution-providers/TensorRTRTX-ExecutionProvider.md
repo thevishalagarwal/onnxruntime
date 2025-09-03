@@ -150,7 +150,7 @@ TensorRT RTX EP provides the following user configurable options with the [Execu
 
 
 
-#### Click below for Python API example:
+Click below for Python API example:
 
 
 <details>
@@ -174,7 +174,7 @@ sess = ort.InferenceSession(model_path, sess_options=sesion_options, providers=[
 </details>
 
 
-#### Click below for C++ API example:
+Click below for C++ API example:
 
 
 <details>
