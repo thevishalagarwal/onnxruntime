@@ -99,13 +99,13 @@ For a practical example of usage, please refer to:
 
 There are two other ways to quick generate an EP context model
 
-1. **ONNX Runtime Perf Test**
+**ONNX Runtime Perf Test**
 
 ```sh
 onnxruntime_perf_test.exe -e nvtensorrtrtx -I -r 1 "/path/to/model.onnx" --compile_ep_context --compile_model_path "/path/to/model_ctx.onnx"
 ```
 
-2. **Python Script**
+**Python Script**
 
 ```sh
 python tools/python/compile_ep_context_model.py -i "path/to/model.onnx" -o "/path/to/model_ctx.onnx"
