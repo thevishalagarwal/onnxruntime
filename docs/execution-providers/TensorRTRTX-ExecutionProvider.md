@@ -58,19 +58,65 @@ sess = ort.InferenceSession(model_path, providers=['NvTensorRtRtxExecutionProvid
 
 ### CUDA Graph
 
+CUDA Graph Text
+
 ### EP context model
 
-TensorRT RTX separates compilation into two phases - ahead of time (AOT) and just in time (JIT) compilation. In AOT phase, the ONNX model is compiled to an optimized binary blob and stored as an EP context model. This model will be compatible across multiple GPU generations.
+In ONNXRuntime, Execution Providers are responsible for converting ONNX models into the graph format required by its specific backend SDK and subsequently compiling them into a format compatible with the target hardware. In large models like LLMs and Diffusion models, this conversion and compilation process can be resource-intensive and time-consuming, often extending to tens of minutes. This overhead significantly impacts the user experience during session creation.
 
-During inference, we only use the compiled EP context model. When loaded, TensorRT RTX will JIT compile the binary blob (engine) to fit to the used GPU. This JIT process is accelerated by TensorRT RTX's internal cache.
+To mitigate the repetitive nature of model conversion and compilation, the ONNX models can be pre-compiled model as a binary file and persisted in an "EP Context" Model. This pre-compiled model can then be loaded directly by the EP, bypassing the initial compilation steps and enabling immediate execution on the target device. This optimization substantially reduces session creation time and enhances overall operational efficiency.
 
-For an example usage see:
-https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/test/providers/nv_tensorrt_rtx/nv_basic_test.cc
+TensorRT RTX simplifies this approach by separating compilation into two distinct phases:
+* Ahead-of-Time (AOT) Compilation: The ONNX model is compiled into an optimized binary blob, which is then stored as an EP context model. This generated model is designed for compatibility across multiple generations of GPUs.
+* Just-in-Time (JIT) Compilation: During inference, the compiled EP context model is loaded. TensorRT RTX then performs a JIT compilation of the binary blob (engine) to precisely adapt it to the specific GPU in use.
+
+The primary benefit of this multi-phase compilation workflow is a significant reduction in model load times.
+
+#### Generating EP Context Models with ORT 1.22
+
+ONNX Runtime 1.22 introduced dedicated [Compile APIs](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/core/session/compile_api.h) to simplify the generation of EP context models:
+
+```cpp
+Ort::ModelCompilationOptions compile_options(env, session_options);
+compile_options.SetInputModelPath(input_model_path);
+compile_options.SetOutputModelPath(compile_model_path);
+
+Ort::Status status = Ort::CompileModel(env, compile_options);
+```
+
+After successful generation, the EP context model can be directly loaded for inference:
+
+```cpp
+Ort::Session session(env, compile_model_path, session_options);
+```
+
+This approach leads to a considerable reduction in session creation time, thereby improving the overall user experience.
+
+For a practical example of usage, please refer to:
+* EP context samples
+* EP context [unit tests](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/test/providers/nv_tensorrt_rtx/nv_ep_context_test.cc)
+
+
+#### NVIDIA recommended settings
+
+* disable ORT graph optimization
+```cpp
+session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_DISABLE_ALL);
+```
+
+* For models > 2GB, set embed_mode = 0 in model compilation options. If binary blob is embedded within the EP context, it fails for > 2GB models due to protobuf limitations
+```cpp
+Ort::ModelCompilationOptions compile_options(env, session_options);
+compile_options.SetEpContextEmbedMode(0);
+```
+
 
 ### Runtime cache
 
+
+
 ## Execution Provider Options
-TensorRT RTX EP provides the following user configurable options with the [Execution Provider Options](./TensorRTRTX-ExecutionProvider.md#execution-provider-options)
+TensorRT RTX EP provides the following user configurable options with the [Execution Provider Options](https://github.com/microsoft/onnxruntime/blob/main/include/onnxruntime/core/providers/nv_tensorrt_rtx/nv_provider_options.h)
 
 
 | Parameter | Type | Description | Default |
@@ -91,6 +137,7 @@ TensorRT RTX EP provides the following user configurable options with the [Execu
 
 
 #### Click below for Python API example:
+
 
 <details>
 
@@ -114,6 +161,7 @@ sess = ort.InferenceSession(model_path, sess_options=sesion_options, providers=[
 
 
 #### Click below for C++ API example:
+
 
 <details>
 
