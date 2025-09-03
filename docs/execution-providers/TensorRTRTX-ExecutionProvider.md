@@ -2,7 +2,7 @@
 title: NVIDIA - TensorRT RTX
 description: Instructions to execute ONNX Runtime on NVIDIA RTX GPUs with the NVIDIA TensorRT RTX execution provider
 parent: Execution Providers
-nav_order: 3
+nav_order: 2
 redirect_from: /docs/reference/execution-providers/TensorRTRTX-ExecutionProvider
 ---
 
@@ -60,7 +60,12 @@ sess = ort.InferenceSession(model_path, providers=['NvTensorRtRtxExecutionProvid
 
 ### EP context model
 
+TensorRT RTX separates compilation into two phases - ahead of time (AOT) and just in time (JIT) compilation. In AOT phase, the ONNX model is compiled to an optimized binary blob and stored as an EP context model. This model will be compatible across multiple GPU generations.
 
+During inference, we only use the compiled EP context model. When loaded, TensorRT RTX will JIT compile the binary blob (engine) to fit to the used GPU. This JIT process is accelerated by TensorRT RTX's internal cache.
+
+For an example usage see:
+https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/test/providers/nv_tensorrt_rtx/nv_basic_test.cc
 
 ### Runtime cache
 
