@@ -26,7 +26,7 @@ For compatibility and support matrix, please refer to [this](https://docs.nvidia
 {: .no_toc }
 
 * TOC placeholder
-{:toc}
+{:toc toc_levels=1..4}
 
 ## Install
 
