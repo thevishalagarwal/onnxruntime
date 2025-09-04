@@ -58,7 +58,56 @@ sess = ort.InferenceSession(model_path, providers=['NvTensorRtRtxExecutionProvid
 
 ### CUDA Graph
 
-CUDA Graph Text
+CUDA Graph is a representation of a sequence of GPU operations, such as kernel launches and memory copies, captured from a CUDA stream. Instead of the CPU launching each operation individually, the entire sequence is captured once and then replayed on the GPU. This process significantly reduces CPU overhead and improves GPU utilization. Find out more details about CUDA Graphs from this [blog](https://developer.nvidia.com/blog/cuda-graphs/)
+
+**Key Benefits**
+
+* **Reduced CPU Overhead**: The most significant benefit is the reduction in CPU-side work. Instead of the CPU having to schedule and dispatch hundreds or thousands of individual kernels for each inference, it only issues one command to replay the entire graph.
+* **Lower Latency**: By eliminating the gaps between kernel launches, CUDA Graphs enable the GPU to work more continuously, leading to lower and more predictable end-to-end latency.
+* **Improved Scalability**: This reduced overhead makes multi-threaded workloads more efficient, as the contention for CPU resources to launch kernels is minimized.
+
+#### Usage
+
+For models where input shapes don't change. e.g. convolutional models, CUDA Graph can be enabled by setting a provider option during the creation of the InferenceSession. By default, ORT uses a graph annotation ID of 0 and starts capturing with this. Users can control the annotation ID at runtime by setting the run option `gpu_graph_id`. If we have `gpu_graph_id` as -1, it indicates that the graph will not be captured for that specific run.
+
+**Python**
+
+```python
+providers = [('NvTensorRTRTXExecutionProvider', {'enable_cuda_graph': True})]
+session = ort.InferenceSession("model.onnx", providers=providers)
+```
+
+**C/C++**
+```cpp
+const auto& api = Ort::GetApi();
+Ort::SessionOptions session_options;
+const char* keys[]   = {onnxruntime::nv::provider_option_names::kCudaGraphEnable};
+const char* values[] = {"1"};
+OrtStatus* status = api.SessionOptionsAppendExecutionProvider(session_options, onnxruntime::kNvTensorRTRTXExecutionProvider, keys, values, 1);
+Ort::Session session(env, model_path, session_options);
+```
+
+**ONNXRuntime Perf Test**
+```sh
+onnxruntime_perf_test.exe -I -t 5 -e nvtensorrtrtx -i "enable_cuda_graph|1" "model.onnx"
+```
+
+
+**Where to use?**
+
+Enabling CUDA Graph is advantageous in scenarios characterized by static execution patterns and numerous small GPU kernels, as this reduces CPU overhead and improves GPU utilization.
+* Static-shaped models: Models with fixed input dimensions, such as many convolutional neural networks (CNNs) used for image classification, are ideal candidates.
+* LLMs with stable shapes: For Large Language Models, CUDA Graphs are primarily utilized to optimize the decoding phase, where tokens are generated sequentially. This phase involves a repetitive sequence of identical GPU kernel launches, making it well-suited for graph capture and replay. Although the prefill phase is less suitable due to its variable input size, capturing a new graph for each recurring shape enables the decoder to achieve significant speedups and reduced CPU overhead.
+* Workloads with frequent identical executions: Applications that repeatedly perform the same sequence of GPU operations benefit from performance improvements, as the initial cost of capturing the graph is amortized over many replays.
+
+**Where not to use?**
+
+Enabling CUDA Graph should be avoided or approached with caution in scenarios where the execution pattern is not stable or where the overhead outweighs the benefits.
+* Models with conditional flow or loops: Models that use control-flow operators such as loops or conditionals can disrupt the CUDA Graph capture process.
+* Highly variable input shapes: For dynamic-shaped models where the input shape changes with every request and there is no repetition, CUDA Graph provides no benefit. In these cases, each run would require a new graph capture, which is slower than regular execution, and the replay mechanism would not be utilized.
+* Workloads with short-lived executions: The initial capture phase incurs a cost. If an application performs only one or two inferences, the overhead of capturing the graph may exceed any performance benefit from replaying it.
+* Models dominated by very large kernels: If a model's total execution time is primarily spent on a few very large, long-running kernels, the CPU launch overhead is already negligible. In such cases, the benefits of CUDA Graph are minimal.
+
 
 ### EP context model
 
@@ -127,6 +176,9 @@ compile_options.SetEpContextEmbedMode(0);
 
 ### Runtime cache
 
+Runtime caches help with JIT compilation time. So if you compiled an EP context not and load the produced node model for the first time specialized CUDA kernels for your GPU will be produced. 
+By specifying a directory as "nv_runtime_cache_path" a cache will be created for every TensorRT RTX engine in an EP context node, upon the second load this cache will be loaded and ensure the optimal kernels are already precompiled and can be deserialized rather than compiled. Especially on large networks with diverse operators this can have significant impact e.g. SD 1.5 which is a mixture of many Conv and MatMul operators.
+Nor information about the graph structure nor weights will be serialized to this cache. 
 
 
 ## Execution Provider Options
