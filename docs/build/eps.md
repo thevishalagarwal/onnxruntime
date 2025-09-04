@@ -165,7 +165,7 @@ Dockerfile instructions are available [here](https://github.com/microsoft/onnxru
 
 See more information on the TensorRT RTX Execution Provider [here](../execution-providers/TensorRTRTX-ExecutionProvider.md).
 
-## Minimum requirements
+### Minimum requirements
 
 | ONNX Runtime | TensorRT-RTX | CUDA Toolkit   |
 | :----------- | :----------- | :------------- |
