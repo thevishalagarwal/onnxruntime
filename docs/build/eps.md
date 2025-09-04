@@ -187,21 +187,19 @@ git clone https://github.com/microsoft/onnxruntime.git
 cd onnxruntime
 ```
 
-### C/C++ APIs
-
-#### Windows
+### Windows
 
 ```powershell
 .\build.bat --config Release --build_dir build --parallel --use_nv_tensorrt_rtx --tensorrt_rtx_home "path\to\tensorrt-rtx" --cuda_home "path\to\cuda\home" --cmake_generator "Visual Studio 17 2022" --build_shared_lib --skip_tests --build --update --use_vcpkg        
 ```
 
-#### Linux
+### Linux
 
 ```sh
 ./build.sh --config Release --build_dir build --parallel --use_nv_tensorrt_rtx --tensorrt_rtx_home "path/to/tensorrt-rtx" --cuda_home "path/to/cuda/home" --build_shared_lib --skip_tests --build --update          
 ```
 
-#### Run unit test
+### Run unit test
 ```powershell
 .\build\Release\Release\onnxruntime_test_all.exe --gtest_filter=*NvExecutionProviderTest.*
 ```
@@ -215,8 +213,8 @@ cd onnxruntime
 # install
 pip install "build\Release\Release\dist\onnxruntime-1.23.0-cp312-cp312-win_amd64.whl"
 ```
-{: .note }
-TensorRT-RTX .dll or .so are in `PATH` or in the same folder as the application
+
+> NOTE: TensorRT-RTX .dll or .so are in `PATH` or in the same folder as the application
 
 ---
 

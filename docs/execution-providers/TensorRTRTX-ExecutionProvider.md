@@ -252,8 +252,7 @@ session_options.AppendExecutionProvider(onnxruntime::kNvTensorRTRTXExecutionProv
 
 
 
-{: .note }
-For bool type options, assign them with **True**/**False** in python, or **1**/**0** in C++.
+> NOTE: For bool type options, assign them with **True**/**False** in python, or **1**/**0** in C++.
 
 
 #### Profile shape options
