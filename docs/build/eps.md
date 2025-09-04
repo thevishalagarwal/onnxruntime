@@ -170,6 +170,7 @@ See more information on the TensorRT RTX Execution Provider [here](../execution-
 | ONNX Runtime | TensorRT-RTX | CUDA Toolkit   |
 | :----------- | :----------- | :------------- |
 | main branch  | 1.1          | 12.9           |
+| 1.23         | 1.1          | 12.9           |
 | 1.22         | 1.0          | 12.8           |
 
 ### Pre-requisites
@@ -177,7 +178,7 @@ See more information on the TensorRT RTX Execution Provider [here](../execution-
 * Install latest [NVIDIA driver](https://www.nvidia.com/en-us/drivers/)
 * Install [CUDA toolkit 12.9](https://developer.nvidia.com/cuda-12-9-1-download-archive)
 * Install [TensorRT RTX](https://docs.nvidia.com/deeplearning/tensorrt-rtx/latest/installing-tensorrt-rtx/installing.html)
-* For Windows only, Visual Studio - https://visualstudio.microsoft.com/downloads/
+* For Windows only, install [Visual Studio](https://visualstudio.microsoft.com/downloads/)
 * Set TensorRT-RTX dlls in `PATH` or put it in same folder as application exe
 
 
@@ -214,6 +215,8 @@ cd onnxruntime
 # install
 pip install "build\Release\Release\dist\onnxruntime-1.23.0-cp312-cp312-win_amd64.whl"
 ```
+{: .note }
+TensorRT-RTX .dll or .so are in `PATH` or in the same folder as the application
 
 ---
 
