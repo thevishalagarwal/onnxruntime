@@ -9,18 +9,19 @@ redirect_from: /docs/reference/execution-providers/TensorRTRTX-ExecutionProvider
 # NVIDIA TensorRT RTX Execution Provider
 {: .no_toc }
 
-The NVIDIA TensorRT RTX Execution Provider (EP) is designed for GPU acceleration on NVIDIA consumer hardware - RTX PCs and Pro workstations. It provides a lighter-weight alternative to the datacenter-oriented TensorRT (TRT) EP and generally offers better performance than other available EPs.
+The NVIDIA TensorRT-RTX Execution Provider (EP) is an inference deployment solution designed specifically for NVIDIA RTX GPUs. It is optimized for client-centric use cases.. 
 
-The following are some advantages of using it on RTX PCs compared to the legacy TensorRT EP:
-*   **Smaller package footprint:** Optimizes resource usage.
-*   **Faster model compile and load times:** Get up and running quicker.
-*   **Enhanced usability:** Seamlessly use cached models across multiple RTX GPUs.
+TensorRT RTX EP provides the following benefits:
 
-The TensorRT RTX EP leverages NVIDIA's new deep learning inference engine, [TensorRT RTX](https://developer.nvidia.com/tensorrt-rtx), to accelerate ONNX models on RTX GPUs. Microsoft and NVIDIA collaborated closely to integrate the TensorRT RTX execution provider with ONNX Runtime.
+* **Small package footprint:** Optimized resource usage on end-user systems at just under 200 MB.  
+* **Faster model compile and load times:** Leverages just-in-time compilation techniques, to build RTX hardware-optimized engines on end-user devices in seconds.  
+* **Portability:** Seamlessly use cached models across multiple RTX GPUs.
 
-Currently, TensorRT RTX supports RTX GPUs based on Ampere and later architectures only.
+The TensorRT RTX EP leverages NVIDIA’s new deep learning inference engine, [TensorRT for RTX](https://developer.nvidia.com/tensorrt-rtx), to accelerate ONNX models on RTX GPUs. Microsoft and NVIDIA collaborated closely to integrate the TensorRT RTX EP with ONNX Runtime.
 
-For compatibility and support matrix, please refer to [this](https://docs.nvidia.com/deeplearning/tensorrt-rtx/latest/getting-started/support-matrix.html) page.
+Currently, TensorRT RTX supports RTX GPUs based on Ampere and later architectures.
+
+For a full compatibility and support matrix, please refer to [this](https://docs.nvidia.com/deeplearning/tensorrt-rtx/latest/getting-started/support-matrix.html) page.
 
 ## Contents
 {: .no_toc }
@@ -30,7 +31,7 @@ For compatibility and support matrix, please refer to [this](https://docs.nvidia
 
 ## Install
 
-Currently, TensorRT RTX EP can be only built from source code. Support for installation from package managers, such as PyPi and NuGet, is coming soon. See the [WinML install section](../install/#cccwinml-installs) for WinML-related installation instructions.
+Currently, TensorRT RTX EP can be built from the source code. Support for installation from package managers, such as PyPi and NuGet, is coming soon. See the [WinML install section](../install/#cccwinml-installs) for WinML-related installation instructions.
 
 ## Build from source
 
@@ -48,7 +49,7 @@ Ort::Session session(env, model_path, session_options);
 
 ### Python
 
-When using the Python API, register the TensorRT RTX Execution Provider by specifying it in the `providers` argument when creating an `InferenceSession`.
+Register the TensorRT RTX  EP by specifying it in the providers argument when creating an InferenceSession.
 
 ```python
 import onnxruntime as ort
@@ -59,17 +60,11 @@ session = ort.InferenceSession(model_path, providers=['NvTensorRtRtxExecutionPro
 
 ### CUDA Graph
 
-CUDA Graph is a representation of a sequence of GPU operations, such as kernel launches and memory copies, captured from a CUDA stream. Instead of the CPU launching each operation individually, the entire sequence is captured once and then replayed on the GPU. This process significantly reduces CPU overhead and improves GPU utilization. Find out more details about CUDA Graphs from [this blog](https://developer.nvidia.com/blog/cuda-graphs/).
-
-**Key Benefits**
-
-* **Reduced CPU Overhead**: The most significant benefit is the reduction in CPU-side work. Instead of the CPU having to schedule and dispatch hundreds or thousands of individual kernels for each inference, it only issues one command to replay the entire graph.
-* **Lower Latency**: By eliminating the gaps between kernel launches, CUDA Graphs enable the GPU to work more continuously, leading to lower and more predictable end-to-end latency.
-* **Improved Scalability**: This reduced overhead makes multi-threaded workloads more efficient, as the contention for CPU resources to launch kernels is minimized.
+CUDA Graph is a representation of a sequence of GPU operations, such as kernel launches and memory copies, captured from a CUDA stream. Instead of the CPU launching each operation individually, the entire sequence is captured at once and then replayed on the GPU. This process significantly reduces CPU overhead and improves GPU utilization. Find out more details about CUDA Graphs from [this blog](https://developer.nvidia.com/blog/cuda-graphs/).
 
 **Usage**
 
-For models where input shapes don't change. e.g. convolutional models, CUDA Graph can be enabled by setting a provider option. By default, ORT uses a graph annotation ID of 0 and starts capturing with this. Users can control the annotation ID at runtime by setting the run option `gpu_graph_id`. If we have `gpu_graph_id` as -1, it indicates that the graph will not be captured for that specific run.
+CUDA Graph can be enabled by setting a provider option. By default, ONNX Runtime uses a graph annotation ID of 0 and starts capturing graphs. Users can control the annotation ID at runtime by setting the run option `gpu_graph_id`. If we have `gpu_graph_id` as \-1, it indicates that the graph will not be captured for that specific run.
 
 **Python**
 
@@ -94,34 +89,24 @@ Ort::Session session(env, model_path, session_options);
 onnxruntime_perf_test.exe -I -t 5 -e nvtensorrtrtx -i "enable_cuda_graph|1" "model.onnx"
 ```
 
+**Effectively Using CUDA Graphs**
 
-**Where to use?**
+CUDA Graph can be beneficial when execution patterns are static and involve many small GPU kernels. This feature helps reduce CPU overhead and improve GPU utilization, particularly for static execution plans run more than twice.
 
-Enabling CUDA Graph is advantageous in scenarios characterized by static execution patterns and numerous small GPU kernels, as this reduces CPU overhead and improves GPU utilization.
-* **Static-shaped models**: Models with fixed input dimensions, such as many convolutional neural networks (CNNs) used for image classification, are ideal candidates.
-* **LLMs with stable shapes**: For Large Language Models, CUDA Graphs are primarily utilized to optimize the decoding phase, where tokens are generated sequentially. This phase involves a repetitive sequence of identical GPU kernel launches, making it well-suited for graph capture and replay. Although the prefill phase is less suitable due to its variable input size, capturing a new graph for each recurring shape enables the decoder to achieve significant speedups and reduced CPU overhead.
-* **Workloads with frequent identical executions**: Applications that repeatedly perform the same sequence of GPU operations benefit from performance improvements, as the initial cost of capturing the graph is amortized over many replays.
+Avoid enabling CUDA Graph or proceed with caution if:
 
-**Where not to use?**
-
-Enabling CUDA Graph should be avoided or approached with caution in scenarios where the execution pattern is not stable or where the overhead outweighs the benefits.
-* **Models with conditional flow or loops**: Models that use control-flow operators such as loops or conditionals can disrupt the CUDA Graph capture process.
-* **Highly variable input shapes**: For dynamic-shaped models where the input shape changes with every request and there is no repetition, CUDA Graph provides no benefit. In these cases, each run would require a new graph capture, which is slower than regular execution, and the replay mechanism would not be utilized.
-* **Workloads with short-lived executions**: The initial capture phase incurs a cost. If an application performs only one or two inferences, the overhead of capturing the graph may exceed any performance benefit from replaying it.
-* **Models dominated by very large kernels**: If a model's total execution time is primarily spent on a few very large, long-running kernels, the CPU launch overhead is already negligible. In such cases, the benefits of CUDA Graph are minimal.
+* Input shapes or device bindings frequently change.  
+* The control flow is conditional and data-dependent.
 
 
 ### EP context model
 
-In ONNX Runtime, Execution Providers (EPs) handle the transformation of ONNX models into the specific graph format required by their backend SDKs, followed by compilation for the target hardware. For large-scale models such as LLMs and Diffusion models, this process can be both computationally expensive and time-consuming, resulting in longer session startup times.
+EP context nodes are precompiled optimized formats that are execution provider specific. They enable to compile a standard ONNX model once and make any subsequent load of the same unchanged model as fast as possible.
 
-To improve this workflow, ONNX models can be pre-compiled into a binary format and stored as an "EP Context" model. By loading this pre-compiled context, the EP can bypass the initial conversion and compilation phases, enabling immediate execution on the device. This approach greatly accelerates session creation and improves overall efficiency.
+TensorRT RTX handle compilation into two distinct phases:
 
-TensorRT RTX simplifies this approach by separating compilation into two distinct phases:
-* **Ahead-of-Time (AOT)**: The ONNX model is compiled into an optimized binary blob, which is then stored as an EP context model. This generated model is designed for compatibility across multiple generations of GPUs.
+* **Ahead-of-Time (AOT)**: The ONNX model is compiled into an optimized binary blob, and stored as an EP context model.  
 * **Just-in-Time (JIT)**: At inference time, the EP context model is loaded and TensorRT RTX dynamically compiles the binary blob (engine) to optimize it for the exact GPU hardware being used.
-
-The primary benefit of this multi-phase compilation workflow is a significant reduction in model load times.
 
 **Generating EP Context Models**
 
@@ -143,16 +128,16 @@ After successful generation, the EP context model can be directly loaded for inf
 Ort::Session session(env, compile_model_path, session_options);
 ```
 
-This approach leads to a considerable reduction in session creation time, thereby improving the overall user experience.
+This leads to a considerable reduction in session creation time, improving the overall user experience.
 
-The JIT time can also be accelerated using runtime cache. A runtime cache directory is created in which a per model cache will be produced that stores the compiled CUDA kernels and can further reduce setup time. More details about it [here](#runtime-cache).
+The JIT time can be further improved using runtime cache. A runtime cache directory  with a per model cache is created. This cache stores the compiled CUDA kernels and reduces session load time. Learn more  about the process [here](#runtime-cache).
 
 For a practical example of usage for EP context, please refer to:
-* EP context samples
+
+* EP context samples  
 * EP context [unit tests](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/test/providers/nv_tensorrt_rtx/nv_ep_context_test.cc)
 
-
-There are two other ways to quick generate an EP context model
+There are two other ways to quick generate an EP context model:
 
 **ONNXRuntime Perf Test**
 
@@ -177,7 +162,7 @@ compile_options.SetEpContextEmbedMode(0);
 
 ### Runtime cache
 
-Runtime caches help to reduce JIT compilation time. When a user compiles an EP context and loads the resulting model for the first time, the system generates specialized CUDA kernels for the GPU. By setting the provider option `"nv_runtime_cache_path"` to a directory, a cache is created for each TensorRT RTX engine in an EP context node. On subsequent loads, this cache allows the system to quickly deserialize precompiled kernels instead of compiling them again. This is especially helpful for large models with many different operators, such as SD 1.5, which includes a mix of Conv and MatMul operations. The cache only contains compiled kernels. No information about the model’s graph structure or weights is stored.
+Runtime caches help reduce JIT compilation time. When a user compiles an EP context and loads the resulting model for the first time, the system generates specialized CUDA kernels for the GPU. By setting the provider option `"nv_runtime_cache_path"` to a directory, a cache is created for each TensorRT RTX engine in an EP context node. On subsequent loads, this cache allows the system to quickly deserialize precompiled kernels instead of compiling them again. This is especially helpful for large models with many different operators, such as SD 1.5, which includes a mix of Conv and MatMul operations. The cache only contains compiled kernels. No information about the model’s graph structure or weights is stored.
 
 
 ## Execution Provider Options
@@ -257,18 +242,17 @@ session_options.AppendExecutionProvider(onnxruntime::kNvTensorRTRTXExecutionProv
 
 #### Profile shape options
 
-* Description: build with explicit dynamic shapes using a profile with the min/max/opt shapes provided.
-  * By default TensorRT RTX engines will support dynamic shapes, for perofmance improvements it is possible to specify one or multiple explicit ranges of shapes.
-  * The format of the profile shapes is `input_tensor_1:dim_1xdim_2x...,input_tensor_2:dim_3xdim_4x...,...`
-    * These three flags should all be provided in order to enable explicit profile shapes feature.
-  * Note that multiple TensorRT RTX profiles can be enabled by passing multiple shapes for the same input tensor.
-  * Check TensorRT doc [optimization profiles](https://docs.nvidia.com/deeplearning/tensorrt-rtx/latest/inference-library/work-with-dynamic-shapes.html) for more details.
-
+* Description: build with explicit dynamic shapes using a profile with the min/max/opt shapes provided.  
+  * By default TensorRT RTX engines support dynamic shapes. For additional performance improvements, you can specify one or multiple explicit ranges of shapes.  
+  * The format of the profile shapes is `input_tensor_1:dim_1xdim_2x...,input_tensor_2:dim_3xdim_4x...,...`  
+    * These three flags  must be provided in order to enable explicit profile shapes.  
+  * Note that multiple TensorRT RTX profiles can be enabled by passing multiple shapes for the same input tensor.  
+  * Check TensorRT for RTX doc [optimization profiles](https://docs.nvidia.com/deeplearning/tensorrt-rtx/latest/inference-library/work-with-dynamic-shapes.html) for more details.
 
 ## Performance test
 
 When using [onnxruntime_perf_test](https://github.com/microsoft/onnxruntime/tree/main/onnxruntime/test/perftest#onnxruntime-performance-test), use the flag `-e nvtensorrttrx`
 
-
 ### Plugins Support
-TensorRT RTX doesn't support plugins
+
+TensorRT RTX doesn’t support plugins
