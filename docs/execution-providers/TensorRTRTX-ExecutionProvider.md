@@ -253,6 +253,6 @@ session_options.AppendExecutionProvider(onnxruntime::kNvTensorRTRTXExecutionProv
 
 When using [onnxruntime_perf_test](https://github.com/microsoft/onnxruntime/tree/main/onnxruntime/test/perftest#onnxruntime-performance-test), use the flag `-e nvtensorrttrx`
 
-### Plugins Support
+## Plugins Support
 
 TensorRT RTX doesn’t support plugins
