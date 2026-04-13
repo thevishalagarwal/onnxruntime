@@ -15,6 +15,7 @@
 #include "core/graph/basic_types.h"
 #include "core/graph/model.h"
 #include "core/graph/onnx_protobuf.h"
+#include "core/framework/tensorprotoutils.h"
 #include "core/graph/model_saving_options.h"
 #include "core/graph/schema_registry.h"
 #include "test/util/include/scoped_env_vars.h"
@@ -413,6 +414,50 @@ void CreateLargeLLMModel(const PathString& model_path, const PathString& externa
   graph.AddNode("Output_Linear", "MatMul", "", {current_arg, graph.GetNodeArg(w_logits.name())}, {&output});
 
   // Validate, Write as large model with external data
+  auto status = graph.Resolve();
+  if (!status.IsOK()) throw std::runtime_error(status.ErrorMessage());
+
+  onnxruntime::ModelSavingOptions save_options(128);
+  status = onnxruntime::Model::SaveWithExternalInitializers(
+      model, model_path, external_data_path, save_options);
+  if (!status.IsOK()) throw std::runtime_error(status.ErrorMessage());
+}
+
+void CreateSimpleMlpModel(const PathString& model_path, const PathString& external_data_path,
+                           int num_layers, int hidden_dim) {
+  auto dtype = ONNX_NAMESPACE::TensorProto_DataType_FLOAT16;
+  int batch_size = 1;
+  int seq_length = 32;
+
+  onnxruntime::Model model("SimpleMLP", false, DefaultLoggingManager().DefaultLogger());
+  auto& graph = model.MainGraph();
+
+  // Input
+  ONNX_NAMESPACE::TypeProto input_type;
+  input_type.mutable_tensor_type()->set_elem_type(dtype);
+  input_type.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(batch_size);
+  input_type.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(seq_length);
+  input_type.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(hidden_dim);
+  auto& input = graph.GetOrCreateNodeArg("input", &input_type);
+  auto* current = &input;
+
+  for (int l = 0; l < num_layers; ++l) {
+    auto w = CreateLargeWeight("w_" + std::to_string(l), dtype, {hidden_dim, hidden_dim});
+    graph.AddInitializedTensor(w);
+
+    auto& mm_out = graph.GetOrCreateNodeArg("mm_" + std::to_string(l), nullptr);
+    graph.AddNode("MatMul_" + std::to_string(l), "MatMul", "", {current, graph.GetNodeArg(w.name())}, {&mm_out});
+
+    auto& relu_out = graph.GetOrCreateNodeArg("relu_" + std::to_string(l), nullptr);
+    graph.AddNode("Relu_" + std::to_string(l), "Relu", "", {&mm_out}, {&relu_out});
+
+    current = &relu_out;
+  }
+
+  // Final output (rename)
+  auto& output = graph.GetOrCreateNodeArg("output", nullptr);
+  graph.AddNode("Identity_out", "Identity", "", {current}, {&output});
+
   auto status = graph.Resolve();
   if (!status.IsOK()) throw std::runtime_error(status.ErrorMessage());
 

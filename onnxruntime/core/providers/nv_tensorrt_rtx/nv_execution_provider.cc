@@ -2910,6 +2910,7 @@ Status NvExecutionProvider::CreateNodeComputeInfoFromGraph(const GraphViewer& gr
     LOGS_DEFAULT(VERBOSE) << "[NvTensorRTRTX EP] STRIP_PLAN is enabled";
     trt_config->setFlag(nvinfer1::BuilderFlag::kREFIT_IDENTICAL);
     LOGS_DEFAULT(VERBOSE) << "[NvTensorRTRTX EP] REFIT_IDENTICAL is enabled";
+    weight_stripped_engine_refit_ = true;
   }
 
   // Build TRT engine (if needed) and load TRT engine if:

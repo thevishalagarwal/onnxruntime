@@ -5,6 +5,7 @@
 #include "test/unittest_util/framework_test_utils.h"
 #include "test/providers/nv_tensorrt_rtx/test_nv_trt_rtx_ep_util.h"
 
+#include <cmath>
 #include <fstream>
 #include <filesystem>
 
@@ -13,6 +14,60 @@ extern std::unique_ptr<Ort::Env> ort_env;
 namespace onnxruntime {
 
 namespace test {
+
+// Helper: Run session with zero-filled FP16 inputs and return output as float vector.
+// Uses session.Run() with CPU tensors to ensure outputs are on CPU (not IoBinding which may return GPU tensors).
+std::vector<float> RunSessionAndGetOutput(Ort::Session& session) {
+  Ort::AllocatorWithDefaultOptions allocator;
+  auto mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+
+  std::vector<const char*> input_names_c;
+  std::vector<Ort::Value> input_tensors;
+  std::vector<std::vector<uint16_t>> input_buffers;
+
+  for (size_t i = 0; i < session.GetInputCount(); ++i) {
+    auto name = session.GetInputNameAllocated(i, allocator);
+    auto info = session.GetInputTypeInfo(i).GetTensorTypeAndShapeInfo();
+    auto shape = info.GetShape();
+    auto elem_type = info.GetElementType();
+    for (auto& d : shape) { if (d == -1) d = 1; }
+    size_t num_elements = 1;
+    for (auto d : shape) num_elements *= static_cast<size_t>(d);
+
+    input_buffers.emplace_back(num_elements, uint16_t{0});
+    input_tensors.push_back(Ort::Value::CreateTensor(
+        mem_info, input_buffers.back().data(), num_elements * sizeof(uint16_t),
+        shape.data(), shape.size(), elem_type));
+    input_names_c.push_back(_strdup(name.get()));
+  }
+
+  std::vector<const char*> output_names_c;
+  for (size_t i = 0; i < session.GetOutputCount(); ++i) {
+    auto name = session.GetOutputNameAllocated(i, allocator);
+    output_names_c.push_back(_strdup(name.get()));
+  }
+
+  Ort::RunOptions run_options;
+  auto output_tensors = session.Run(run_options,
+                                     input_names_c.data(), input_tensors.data(), input_tensors.size(),
+                                     output_names_c.data(), output_names_c.size());
+
+  auto type_info = output_tensors[0].GetTensorTypeAndShapeInfo();
+  size_t count = type_info.GetElementCount();
+  std::vector<float> result(count);
+
+  if (type_info.GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+    const uint16_t* data = output_tensors[0].GetTensorData<uint16_t>();
+    for (size_t i = 0; i < count; ++i) result[i] = MLFloat16::FromBits(data[i]).ToFloat();
+  } else {
+    const float* data = output_tensors[0].GetTensorData<float>();
+    std::copy(data, data + count, result.begin());
+  }
+
+  for (auto p : input_names_c) free(const_cast<char*>(p));
+  for (auto p : output_names_c) free(const_cast<char*>(p));
+  return result;
+}
 
 RegisteredEpDeviceUniquePtr AppendTrtEtxEP(Ort::SessionOptions& session_options, std::unordered_map<std::string, std::string>& option_map) {
   RegisteredEpDeviceUniquePtr nv_tensorrt_rtx_ep;
@@ -136,7 +191,7 @@ TEST_P(CompileApiTest, LargeModel) {
   clearFileIfExists(model_name_ctx_data);
   // This accelerates test iterations if the large model was already generated
   if (!std::filesystem::exists(model_name) || !std::filesystem::exists(external_data_name)) {
-    CreateLargeLLMModel(model_name, external_data_name);
+    CreateSimpleMlpModel(model_name, external_data_name, 32, 4096);
   }
 
   Ort::SessionOptions session_options;
@@ -199,6 +254,308 @@ INSTANTIATE_TEST_SUITE_P(
     [](const testing::TestParamInfo<CompileApiTest::ParamType>& info) {
       return info.param.to_string();
     });
+
+/*
+ * Test: Weight-stripped engine produces same output as normal engine.
+ *
+ * Uses CreateLargeLLMModel which generates a multi-layer MLP with FP16 MatMul weight
+ * initializers stored as external data. This ensures the model has real weights that
+ * TensorRT can strip from the engine plan (kSTRIP_PLAN) and refit at load time.
+ *
+ * Compiles the same model twice (normal and weight-stripped), runs inference on both
+ * with identical zero-initialized inputs, and verifies that all output values match.
+ */
+TEST(NvExecutionProviderTest, WeightStrippedEngine_OutputMatchesNormal) {
+  PathString model_name = path_utils::MakePathString("nv_ep_weight_stripped_test.onnx");
+  PathString external_data_name = path_utils::MakePathString("nv_ep_weight_stripped_test.onnx_data");
+  PathString ctx_normal = path_utils::MakePathString("nv_ep_weight_stripped_test_normal_ctx.onnx");
+  PathString ctx_stripped = path_utils::MakePathString("nv_ep_weight_stripped_test_stripped_ctx.onnx");
+  clearFileIfExists(ctx_normal);
+  clearFileIfExists(ctx_stripped);
+
+  // Reuse model if already generated from a previous test run
+  if (!std::filesystem::exists(model_name) || !std::filesystem::exists(external_data_name)) {
+    CreateSimpleMlpModel(model_name, external_data_name, 32, 4096);
+  }
+
+  // Helper to compile and run, returning output values
+  auto compile_and_run = [&](bool weight_stripped, const PathString& ctx_path) -> std::vector<float> {
+    Ort::SessionOptions session_options;
+    std::unordered_map<std::string, std::string> option_map{
+        {onnxruntime::nv::provider_option_names::kUseExternalDataInitializer, "1"}};
+    if (weight_stripped) {
+      option_map[onnxruntime::nv::provider_option_names::kWeightStrippedEngineEnable] = "1";
+    }
+    auto ep = AppendTrtEtxEP(session_options, option_map);
+
+    // Compile
+    Ort::ModelCompilationOptions compile_opts(*ort_env, session_options);
+    compile_opts.SetEpContextEmbedMode(false);
+    compile_opts.SetInputModelPath(model_name.c_str());
+    compile_opts.SetOutputModelPath(ctx_path.c_str());
+    EXPECT_TRUE(Ort::CompileModel(*ort_env, compile_opts).IsOK());
+
+    // Load and run using session.Run() with CPU tensors (not IoBinding)
+    Ort::Session session(*ort_env, ctx_path.c_str(), session_options);
+    Ort::AllocatorWithDefaultOptions allocator;
+
+    // Build deterministic input (zero-filled FP16)
+    std::vector<const char*> input_names_c;
+    std::vector<Ort::Value> input_tensors;
+    std::vector<std::vector<uint16_t>> input_buffers;
+    auto mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+
+    for (size_t i = 0; i < session.GetInputCount(); ++i) {
+      auto name = session.GetInputNameAllocated(i, allocator);
+      auto info = session.GetInputTypeInfo(i).GetTensorTypeAndShapeInfo();
+      auto shape = info.GetShape();
+      auto elem_type = info.GetElementType();
+      for (auto& d : shape) { if (d == -1) d = 1; }
+      size_t num_elements = 1;
+      for (auto d : shape) num_elements *= static_cast<size_t>(d);
+
+      input_buffers.emplace_back(num_elements, uint16_t{0});  // zero-filled FP16
+      input_tensors.push_back(Ort::Value::CreateTensor(
+          mem_info, input_buffers.back().data(), num_elements * sizeof(uint16_t),
+          shape.data(), shape.size(), elem_type));
+      input_names_c.push_back(_strdup(name.get()));
+    }
+
+    std::vector<const char*> output_names_c;
+    for (size_t i = 0; i < session.GetOutputCount(); ++i) {
+      auto name = session.GetOutputNameAllocated(i, allocator);
+      output_names_c.push_back(_strdup(name.get()));
+    }
+
+    Ort::RunOptions run_options;
+    auto output_tensors = session.Run(run_options,
+                                       input_names_c.data(), input_tensors.data(), input_tensors.size(),
+                                       output_names_c.data(), output_names_c.size());
+
+    EXPECT_FALSE(output_tensors.empty());
+    EXPECT_TRUE(output_tensors[0].IsTensor());
+
+    auto type_info = output_tensors[0].GetTensorTypeAndShapeInfo();
+    size_t count = type_info.GetElementCount();
+
+    // Copy to float vector for comparison
+    std::vector<float> result(count);
+    auto elem_type = type_info.GetElementType();
+    if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+      const uint16_t* data = output_tensors[0].GetTensorData<uint16_t>();
+      for (size_t i = 0; i < count; ++i) {
+        result[i] = MLFloat16::FromBits(data[i]).ToFloat();
+      }
+    } else {
+      const float* data = output_tensors[0].GetTensorData<float>();
+      std::copy(data, data + count, result.begin());
+    }
+
+    for (auto p : input_names_c) free(const_cast<char*>(p));
+    for (auto p : output_names_c) free(const_cast<char*>(p));
+    return result;
+  };
+
+  // Run both modes
+  auto output_normal = compile_and_run(false, ctx_normal);
+  auto output_stripped = compile_and_run(true, ctx_stripped);
+
+  // Verify outputs match
+  ASSERT_EQ(output_normal.size(), output_stripped.size());
+  ASSERT_FALSE(output_normal.empty());
+
+  float max_diff = 0.0f;
+  for (size_t i = 0; i < output_normal.size(); ++i) {
+    float diff = std::abs(output_normal[i] - output_stripped[i]);
+    max_diff = std::max(max_diff, diff);
+  }
+
+  EXPECT_LT(max_diff, 0.001f)
+      << "Max absolute difference between normal and weight-stripped outputs: " << max_diff;
+
+  // Cleanup context files (keep the large model for reuse across test runs)
+  clearFileIfExists(ctx_normal);
+  clearFileIfExists(ctx_stripped);
+  for (auto& entry : std::filesystem::directory_iterator(".")) {
+    if (entry.path().extension() == ".engine" &&
+        entry.path().string().find("NvTensorRTRTX") != std::string::npos) {
+      std::filesystem::remove(entry.path());
+    }
+  }
+}
+
+/*
+ * Test: Weight-stripped engine file is significantly smaller than normal engine.
+ *
+ * Compiles the same LLM model in both modes and compares .engine file sizes.
+ * Weight-stripped engines should be orders of magnitude smaller since they
+ * contain only the network structure, not the weight data.
+ */
+TEST(NvExecutionProviderTest, WeightStrippedEngine_EngineSizeReduction) {
+  PathString model_name = path_utils::MakePathString("nv_ep_weight_stripped_size_test.onnx");
+  PathString external_data_name = path_utils::MakePathString("nv_ep_weight_stripped_size_test.onnx_data");
+  PathString ctx_normal = path_utils::MakePathString("nv_ep_weight_stripped_size_normal_ctx.onnx");
+  PathString ctx_stripped = path_utils::MakePathString("nv_ep_weight_stripped_size_stripped_ctx.onnx");
+  clearFileIfExists(ctx_normal);
+  clearFileIfExists(ctx_stripped);
+
+  // Use hidden_dim=2048 so weights (~64MB) dominate engine size and stripping shows a clear reduction
+  if (!std::filesystem::exists(model_name) || !std::filesystem::exists(external_data_name)) {
+    CreateSimpleMlpModel(model_name, external_data_name, 32, 4096);
+  }
+
+  auto compile_model = [&](bool weight_stripped, const PathString& ctx_path) {
+    Ort::SessionOptions session_options;
+    std::unordered_map<std::string, std::string> option_map{
+        {onnxruntime::nv::provider_option_names::kUseExternalDataInitializer, "1"}};
+    if (weight_stripped) {
+      option_map[onnxruntime::nv::provider_option_names::kWeightStrippedEngineEnable] = "1";
+    }
+    auto ep = AppendTrtEtxEP(session_options, option_map);
+
+    Ort::ModelCompilationOptions compile_opts(*ort_env, session_options);
+    compile_opts.SetEpContextEmbedMode(false);
+    compile_opts.SetInputModelPath(model_name.c_str());
+    compile_opts.SetOutputModelPath(ctx_path.c_str());
+    ASSERT_TRUE(Ort::CompileModel(*ort_env, compile_opts).IsOK());
+  };
+
+  // Find engine files by scanning for .engine files with NvTensorRTRTX in the name
+  auto find_engine_size = []() -> uintmax_t {
+    uintmax_t total = 0;
+    for (auto& entry : std::filesystem::directory_iterator(".")) {
+      if (entry.path().extension() == ".engine" &&
+          entry.path().string().find("NvTensorRTRTX") != std::string::npos) {
+        total += entry.file_size();
+      }
+    }
+    return total;
+  };
+
+  auto cleanup_engines = []() {
+    for (auto& entry : std::filesystem::directory_iterator(".")) {
+      if (entry.path().extension() == ".engine" &&
+          entry.path().string().find("NvTensorRTRTX") != std::string::npos) {
+        std::filesystem::remove(entry.path());
+      }
+    }
+  };
+
+  // Compile normal
+  cleanup_engines();
+  compile_model(false, ctx_normal);
+  uintmax_t normal_size = find_engine_size();
+  ASSERT_GT(normal_size, 0u) << "Normal engine file should exist";
+
+  // Compile weight-stripped
+  cleanup_engines();
+  compile_model(true, ctx_stripped);
+  uintmax_t stripped_size = find_engine_size();
+  ASSERT_GT(stripped_size, 0u) << "Weight-stripped engine file should exist";
+
+  // Weight-stripped should be at least 10x smaller
+  EXPECT_LT(stripped_size, normal_size / 10)
+      << "Weight-stripped engine (" << stripped_size << " bytes) should be much smaller than "
+      << "normal engine (" << normal_size << " bytes)";
+
+  // Cleanup
+  cleanup_engines();
+  clearFileIfExists(ctx_normal);
+  clearFileIfExists(ctx_stripped);
+}
+
+/*
+ * Test: Load pre-compiled weight-stripped context model and refit from ONNX bytestream.
+ *
+ * This mirrors the TensorRT EP's "Refit weightless context model with ONNX in memory" test.
+ * Step 1: Compile a weight-stripped context model
+ * Step 2: Load the context model in a new session with the ONNX model provided as bytestream
+ * Step 3: Run inference and verify output matches the normal compilation
+ */
+TEST(NvExecutionProviderTest, WeightStrippedEngine_RefitFromBytestream) {
+  PathString model_name = path_utils::MakePathString("nv_ep_weight_stripped_refit_bs.onnx");
+  PathString external_data_name = path_utils::MakePathString("nv_ep_weight_stripped_refit_bs.onnx_data");
+  PathString ctx_normal = path_utils::MakePathString("nv_ep_weight_stripped_refit_bs_normal_ctx.onnx");
+  PathString ctx_stripped = path_utils::MakePathString("nv_ep_weight_stripped_refit_bs_stripped_ctx.onnx");
+  clearFileIfExists(ctx_normal);
+  clearFileIfExists(ctx_stripped);
+
+  if (!std::filesystem::exists(model_name) || !std::filesystem::exists(external_data_name)) {
+    CreateSimpleMlpModel(model_name, external_data_name, 32, 4096);
+  }
+
+  // Step 1: Compile normal context model for reference output
+  std::vector<float> output_normal;
+  {
+    Ort::SessionOptions session_options;
+    std::unordered_map<std::string, std::string> option_map{
+        {onnxruntime::nv::provider_option_names::kUseExternalDataInitializer, "1"}};
+    auto ep = AppendTrtEtxEP(session_options, option_map);
+
+    Ort::ModelCompilationOptions compile_opts(*ort_env, session_options);
+    compile_opts.SetEpContextEmbedMode(false);
+    compile_opts.SetInputModelPath(model_name.c_str());
+    compile_opts.SetOutputModelPath(ctx_normal.c_str());
+    ASSERT_TRUE(Ort::CompileModel(*ort_env, compile_opts).IsOK());
+
+    Ort::Session session(*ort_env, ctx_normal.c_str(), session_options);
+    output_normal = RunSessionAndGetOutput(session);
+  }
+
+  // Step 2: Compile weight-stripped context model
+  {
+    Ort::SessionOptions session_options;
+    std::unordered_map<std::string, std::string> option_map{
+        {onnxruntime::nv::provider_option_names::kUseExternalDataInitializer, "1"},
+        {onnxruntime::nv::provider_option_names::kWeightStrippedEngineEnable, "1"}};
+    auto ep = AppendTrtEtxEP(session_options, option_map);
+
+    Ort::ModelCompilationOptions compile_opts(*ort_env, session_options);
+    compile_opts.SetEpContextEmbedMode(false);
+    compile_opts.SetInputModelPath(model_name.c_str());
+    compile_opts.SetOutputModelPath(ctx_stripped.c_str());
+    ASSERT_TRUE(Ort::CompileModel(*ort_env, compile_opts).IsOK());
+  }
+
+  // Step 3: Load the weight-stripped context model with ONNX bytestream for refit
+  std::vector<float> output_refit;
+  {
+    auto onnx_bytes = readBinaryFile(model_name);
+    auto ext_data_bytes = readBinaryFile(external_data_name);
+
+    Ort::SessionOptions session_options;
+    std::unordered_map<std::string, std::string> option_map{
+        {onnxruntime::nv::provider_option_names::kUseExternalDataInitializer, "1"},
+        {onnxruntime::nv::provider_option_names::kWeightStrippedEngineEnable, "1"},
+        {onnxruntime::nv::provider_option_names::kONNXBytestream, std::to_string(reinterpret_cast<size_t>(onnx_bytes.data()))},
+        {onnxruntime::nv::provider_option_names::kONNXBytestreamSize, std::to_string(onnx_bytes.size())},
+        {onnxruntime::nv::provider_option_names::kExternalDataBytestream, std::to_string(reinterpret_cast<size_t>(ext_data_bytes.data()))},
+        {onnxruntime::nv::provider_option_names::kExternalDataBytestreamSize, std::to_string(ext_data_bytes.size())}};
+    auto ep = AppendTrtEtxEP(session_options, option_map);
+
+    Ort::Session session(*ort_env, ctx_stripped.c_str(), session_options);
+    output_refit = RunSessionAndGetOutput(session);
+  }
+
+  // Verify outputs match
+  ASSERT_EQ(output_normal.size(), output_refit.size());
+  float max_diff = 0.0f;
+  for (size_t i = 0; i < output_normal.size(); ++i) {
+    max_diff = std::max(max_diff, std::abs(output_normal[i] - output_refit[i]));
+  }
+  EXPECT_LT(max_diff, 0.001f)
+      << "Bytestream-refitted output should match normal output. Max diff: " << max_diff;
+
+  // Cleanup
+  clearFileIfExists(ctx_normal);
+  clearFileIfExists(ctx_stripped);
+  for (auto& entry : std::filesystem::directory_iterator(".")) {
+    if (entry.path().extension() == ".engine" &&
+        entry.path().string().find("NvTensorRTRTX") != std::string::npos) {
+      std::filesystem::remove(entry.path());
+    }
+  }
+}
 
 /*
  * Helper to create a synthetic EPContext ONNX model with a specific "source" attribute.
