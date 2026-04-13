@@ -18,7 +18,9 @@ NvExecutionProviderInfo NvExecutionProviderInfo::FromProviderOptions(const Provi
   void* user_compute_stream = nullptr;
   void* user_aux_stream_array = nullptr;
   void* onnx_bytestream = nullptr;
+  size_t onnx_bytestream_size = 0;
   void* external_data_bytestream = nullptr;
+  size_t external_data_bytestream_size = 0;
   ORT_THROW_IF_ERROR(
       ProviderOptionsParser{}
           .AddValueParser(
@@ -62,13 +64,35 @@ NvExecutionProviderInfo NvExecutionProviderInfo::FromProviderOptions(const Provi
           .AddAssignmentToReference(nv::provider_option_names::kUseExternalDataInitializer, info.use_external_data_initializer)
           .AddAssignmentToReference(nv::provider_option_names::kMultiProfileEnable, info.multi_profile_enable)
           .AddAssignmentToReference(nv::provider_option_names::kRuntimeCacheFile, info.runtime_cache_path)
-          .Parse(options));  // add new provider option here.
+          .AddAssignmentToReference(nv::provider_option_names::kWeightStrippedEngineEnable, info.weight_stripped_engine_enable)
+          .AddAssignmentToReference(nv::provider_option_names::kOnnxModelFolderPath, info.onnx_model_folder_path)
+          .AddValueParser(
+              nv::provider_option_names::kONNXBytestream,
+              [&onnx_bytestream](const std::string& value_str) -> Status {
+                size_t address;
+                ORT_RETURN_IF_ERROR(ParseStringWithClassicLocale(value_str, address));
+                onnx_bytestream = reinterpret_cast<void*>(address);
+                return Status::OK();
+              })
+          .AddAssignmentToReference(nv::provider_option_names::kONNXBytestreamSize, onnx_bytestream_size)
+          .AddValueParser(
+              nv::provider_option_names::kExternalDataBytestream,
+              [&external_data_bytestream](const std::string& value_str) -> Status {
+                size_t address;
+                ORT_RETURN_IF_ERROR(ParseStringWithClassicLocale(value_str, address));
+                external_data_bytestream = reinterpret_cast<void*>(address);
+                return Status::OK();
+              })
+          .AddAssignmentToReference(nv::provider_option_names::kExternalDataBytestreamSize, external_data_bytestream_size)
+          .Parse(options));
 
   info.user_compute_stream = user_compute_stream;
   info.has_user_compute_stream = (user_compute_stream != nullptr);
   info.user_aux_stream_array = user_aux_stream_array;
   info.onnx_bytestream = onnx_bytestream;
+  info.onnx_bytestream_size = onnx_bytestream_size;
   info.external_data_bytestream = external_data_bytestream;
+  info.external_data_bytestream_size = external_data_bytestream_size;
 
   // EP context settings
   // when EP context is enabled, default is to embed the engine in the context model
@@ -79,8 +103,9 @@ NvExecutionProviderInfo NvExecutionProviderInfo::FromProviderOptions(const Provi
     info.dump_ep_context_model = false;
   } else if (ep_context_enable == "1") {
     info.dump_ep_context_model = true;
-    // We want to reenable weightless engines as soon constant initializers are supported as inputs
-    info.weight_stripped_engine_enable = false;
+    // weight_stripped_engine_enable is preserved from provider options parsing above.
+    // When both ep_context and weight_stripped are enabled, the EP builds weight-stripped engines
+    // (kSTRIP_PLAN + kREFIT_IDENTICAL) and refits weights at inference time from the original ONNX model.
   } else {
     ORT_THROW("Invalid ", kOrtSessionOptionEpContextEnable, " must 0 or 1");
   }
@@ -120,7 +145,13 @@ ProviderOptions NvExecutionProviderInfo::ToProviderOptions(const NvExecutionProv
       {nv::provider_option_names::kProfilesOptShapes, MakeStringWithClassicLocale(info.profile_opt_shapes)},
       {nv::provider_option_names::kCudaGraphEnable, MakeStringWithClassicLocale(info.cuda_graph_enable)},
       {nv::provider_option_names::kUseExternalDataInitializer, MakeStringWithClassicLocale(info.use_external_data_initializer)},
-      {nv::provider_option_names::kRuntimeCacheFile, MakeStringWithClassicLocale(info.runtime_cache_path)}};
+      {nv::provider_option_names::kRuntimeCacheFile, MakeStringWithClassicLocale(info.runtime_cache_path)},
+      {nv::provider_option_names::kWeightStrippedEngineEnable, MakeStringWithClassicLocale(info.weight_stripped_engine_enable)},
+      {nv::provider_option_names::kOnnxModelFolderPath, MakeStringWithClassicLocale(info.onnx_model_folder_path)},
+      {nv::provider_option_names::kONNXBytestream, MakeStringWithClassicLocale(reinterpret_cast<size_t>(info.onnx_bytestream))},
+      {nv::provider_option_names::kONNXBytestreamSize, MakeStringWithClassicLocale(info.onnx_bytestream_size)},
+      {nv::provider_option_names::kExternalDataBytestream, MakeStringWithClassicLocale(reinterpret_cast<size_t>(info.external_data_bytestream))},
+      {nv::provider_option_names::kExternalDataBytestreamSize, MakeStringWithClassicLocale(info.external_data_bytestream_size)}};
   return options;
 }
 }  // namespace onnxruntime

@@ -119,6 +119,19 @@ void CreateBaseModel(const PathString& model_name,
 
 void CreateLargeLLMModel(const PathString& model_path, const PathString& external_data_path);
 
+/**
+ * Create a simple multi-layer MLP model with FP16 MatMul weight initializers stored externally.
+ * Uses only standard ONNX ops (MatMul + Relu) that are fully supported by TensorRT.
+ * Suitable for testing weight-stripped engine compilation and refitting.
+ *
+ * \param model_path - output model file name
+ * \param external_data_path - output external data file name
+ * \param num_layers - number of MatMul+Relu layers (default 4)
+ * \param hidden_dim - hidden dimension (default 256)
+ */
+void CreateSimpleMlpModel(const PathString& model_path, const PathString& external_data_path,
+                           int num_layers = 4, int hidden_dim = 256);
+
 Ort::IoBinding generate_io_binding(
     Ort::Session& session,
     std::map<std::string, std::vector<int64_t>> shape_overwrites = {},
